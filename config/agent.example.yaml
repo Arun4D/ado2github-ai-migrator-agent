@@ -1,0 +1,11 @@
+agent:
+  name: ado_github_migration_agent
+  model:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-Coder-7B-Instruct
+    base_url: http://localhost:8000/v1
+    temperature: 0.1
+    max_tokens: 4096
+  safety:
+    default_dry_run: true
+    require_approved_plan_for_remote_writes: true

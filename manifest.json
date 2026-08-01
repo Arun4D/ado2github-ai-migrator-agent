@@ -1,0 +1,15 @@
+{
+  "name": "ado_github_migration_agent",
+  "version": "0.1.0",
+  "description": "Repository-scoped Azure DevOps Git and pipeline migration planner for GitHub Actions using Qwen2.5-Coder-7B-Instruct",
+  "author": "AI Platform Team",
+  "entry_point": "main.py",
+  "agent_class": "AdoGitHubMigrationAgent",
+  "capabilities": [
+    "discover_azure_devops_repository",
+    "plan_github_actions_migration",
+    "map_variables_and_secrets",
+    "map_windows_and_linux_runners",
+    "validate_git_history_migration"
+  ]
+}
