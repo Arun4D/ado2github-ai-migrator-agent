@@ -11,5 +11,11 @@
     "map_variables_and_secrets",
     "map_windows_and_linux_runners",
     "validate_git_history_migration"
-  ]
+  ],
+  "requires_approval": true,
+  "permission_scope": [
+    "file:read",
+    "fs:scan"
+  ],
+  "min_llm_version": "qwen2.5-coder-1.5b-instruct-gguf"
 }
