@@ -1,0 +1,21 @@
+name: 'Composite Build Action'
+description: 'Standard build composite action'
+
+inputs:
+  build-tool:
+    description: 'Build tool (e.g. dotnet, npm, maven)'
+    required: true
+    default: 'npm'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up tool
+      shell: bash
+      run: |
+        echo "Setting up build tool: ${{ inputs.build-tool }}"
+
+    - name: Run Build
+      shell: bash
+      run: |
+        echo "Building project..."

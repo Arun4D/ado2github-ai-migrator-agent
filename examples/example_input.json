@@ -1,0 +1,114 @@
+{
+  "organization": "contoso",
+  "project": "e-commerce-platform",
+  "repositories": [
+    {
+      "name": "payment-api",
+      "id": "repo-9876",
+      "url": "https://dev.azure.com/contoso/e-commerce-platform/_git/payment-api",
+      "default_branch": "main",
+      "branches": ["main", "develop", "feature/auth"],
+      "tags": ["v1.0.0", "v1.1.0"],
+      "has_lfs": true,
+      "submodules": ["libs/common-utils"]
+    }
+  ],
+  "pipelines": [
+    {
+      "name": "payment-api-ci",
+      "id": 204,
+      "type": "yaml",
+      "variables": [
+        {
+          "name": "Build.Configuration",
+          "value": "Release",
+          "is_secret": false,
+          "source": "pipeline"
+        }
+      ],
+      "stages": [
+        {
+          "name": "Build",
+          "jobs": [
+            {
+              "name": "CompileAndTest",
+              "steps": [
+                {"task": "DotNetCoreCLI@2", "inputs": {"command": "build"}}
+              ]
+            }
+          ]
+        }
+      ],
+      "triggers": [{"branch": "main"}],
+      "schedules": []
+    },
+    {
+      "name": "payment-api-release",
+      "id": 502,
+      "type": "classic_release",
+      "variables": [
+        {
+          "name": "Deploy.Target",
+          "value": "Staging",
+          "is_secret": false,
+          "source": "pipeline"
+        }
+      ],
+      "stages": [
+        {
+          "name": "DeployToProd",
+          "jobs": []
+        }
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "name": "API_URL",
+      "value": "https://api.contoso.com",
+      "is_secret": false,
+      "source": "group"
+    }
+  ],
+  "secrets_metadata": [
+    {
+      "name": "DATABASE_CONN_STRING",
+      "classification": "KeyVaultReference",
+      "has_value": false
+    },
+    {
+      "name": "GITHUB_PAT",
+      "classification": "PAT",
+      "has_value": false
+    }
+  ],
+  "agent_pools": [
+    {
+      "name": "Azure Pipelines",
+      "is_hosted": true,
+      "agent_count": 100,
+      "os_type": "Linux"
+    },
+    {
+      "name": "Private Windows Pool",
+      "is_hosted": false,
+      "agent_count": 5,
+      "os_type": "Windows"
+    }
+  ],
+  "environments": [
+    {
+      "name": "Production",
+      "approvals": [{"approver": "DevOps Leads Group"}],
+      "checks": [{"type": "Branch Control Check"}]
+    }
+  ],
+  "service_connections": [
+    {
+      "name": "AzureRM-Prod",
+      "id": "sc-9988",
+      "type": "AzureRM",
+      "auth_type": "ServicePrincipal"
+    }
+  ]
+}

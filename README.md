@@ -1,21 +1,53 @@
 # Azure DevOps to GitHub Actions Migration Agent
 
-An independent, repository-scoped plugin for `Arun4D/slm-enterprise-ai-platform`. It plans migration of one Azure DevOps Git repository and its build, deployment, and release pipelines to one GitHub repository using GitHub Actions.
+An independent, repository-scoped plugin for `Arun4D/slm-enterprise-ai-platform`. It plans the migration of one Azure DevOps Git repository and its build, deployment, and release pipelines to one GitHub repository using GitHub Actions.
 
-## Structure
+## Target Architecture
+
+The agent follows this modular structure:
 
 ```text
-main.py        # Plugin class and standalone runner
-manifest.json  # Orchestrator metadata
-config.yaml    # Model and safety configuration
-prompts.py     # SLM prompts
-tools.py       # Deterministic helpers
-tests/         # Standard-library tests
+ado2github-ai-migrator-agent/
+├── README.md
+├── manifest.json
+├── config.yaml
+├── main.py
+├── prompts.py
+├── tools.py
+├── planners.py
+├── validation_engine.py
+├── reporting_engine.py
+├── schemas/
+│   ├── discovery.py
+│   ├── migration_plan.py
+│   ├── github_actions.py
+│   ├── validation.py
+│   └── report.py
+├── templates/
+│   ├── github_workflow.yml
+│   ├── reusable_workflow.yml
+│   └── composite_action.yml
+├── examples/
+│   ├── example_input.json
+│   └── example_output.json
+└── tests/
+    └── test_agent.py
 ```
 
-## Run independently
+## Key Components
 
-Python 3.11+ is sufficient for the current dry-run planner; no package installation is required.
+1. **`main.py`**: Entry point loaded by the enterprise orchestrator plugin manager. It orchestrates the migration plan, registers tools, handles errors, and compiles output.
+2. **`prompts.py`**: Manages template formatting, loading, and memory-caching of the modular system instructions in `prompts/`.
+3. **`tools.py`**: Declares metadata-only tool definitions for discovery, repo migration, and validation.
+4. **`planners.py`**: Houses reasoning flow for components (Git history, Pipelines, Variables, Secrets, Environments, Runners) using the SLM.
+5. **`validation_engine.py`**: Validates workflow syntax, variable mappings, scope boundaries, and flags potential risks.
+6. **`reporting_engine.py`**: Assembles comprehensive Markdown and JSON reports (Migration, Validation, Risk, Rollback, Executive Summary).
+7. **`schemas/`**: Pydantic models enforcing structural parsing of discovery context and migration plans.
+8. **`templates/`**: Baseline GitHub Action workflows, reusable workflows, and composite actions templates.
+
+## Standalone Execution
+
+The agent runs independently without external LLM connections by returning standard mock validations or dry-run schemas, making it safe for sandbox environments:
 
 ```powershell
 python main.py `
@@ -26,35 +58,10 @@ python main.py `
   --github-repository api-service
 ```
 
-The output is JSON. It never imports or requires `slm-enterprise-ai-platform`, calls Azure DevOps, calls GitHub, or calls an AI model; it makes no remote changes.
+## Test Suite
 
-## Test
+Verify all components pass SOLID and Pydantic validation checks:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
-
-The test suite verifies repository scope, independent CLI execution, and optional SLM-service injection. It uses Python's standard library only.
-
-## Optional SLM service
-
-`main.py` defines a local `OrchestratorSLMService` protocol. It is not an import from the enterprise platform and is not required to run this agent independently.
-
-- **Independent mode:** no SLM is created or called. The agent uses deterministic keyword routing and returns a dry-run plan.
-- **Orchestrated mode:** the platform calls `set_slm_service()` with its own service. The agent uses only `available` and `classify_intent_sync()` for intent routing.
-
-The model names in `config.yaml` are declarative: the orchestrator selects, hosts, and injects Qwen. This agent does not own model downloads, endpoints, API keys, or credentials.
-
-## Load with the enterprise platform
-
-`slm-enterprise-ai-platform` currently loads a local plugin directory. Its Git-URL loader should securely clone this repository to a managed cache, pin a commit SHA, validate `manifest.json`, then call `PluginManager.load_plugin(local_clone_path)`.
-
-The cloned plugin folder must contain the five root files shown above. The platform instantiates `AdoGitHubMigrationAgent` from `main.py` and injects its SLM service through `set_slm_service()`.
-
-`config.yaml` declares `Qwen/Qwen2.5-Coder-7B-Instruct` as the default model and `qwen2.5-coder:1.5b` as the low-resource option. Model hosting and credentials belong to the orchestrator, not this agent.
-
-## Safety
-
-- Exactly one ADO repository maps to one GitHub repository per plan.
-- The agent defaults to dry run and requires an approved plan before any future remote-write adapter.
-- Secrets are represented only by name and classification; values must never enter prompts, logs, or generated files.

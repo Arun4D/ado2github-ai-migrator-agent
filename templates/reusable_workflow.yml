@@ -1,0 +1,29 @@
+name: Reusable CI/CD Workflow
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.12'
+    secrets:
+      api-token:
+        required: true
+
+jobs:
+  run-pipeline:
+    name: Run Reusable Step
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute
+        run: |
+          echo "Executing CI step for ${{ inputs.environment }}"

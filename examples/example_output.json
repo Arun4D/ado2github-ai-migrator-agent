@@ -1,0 +1,236 @@
+{
+  "status": "success",
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "analysis": {
+    "source": {
+      "organization": "contoso",
+      "project": "e-commerce-platform",
+      "repository": "payment-api"
+    },
+    "target": {
+      "organization": "contoso-engineering",
+      "repository": "payment-api"
+    }
+  },
+  "migration_plan": {
+    "mapping": {
+      "source_org": "contoso",
+      "source_project": "e-commerce-platform",
+      "source_repo": "payment-api",
+      "target_org": "contoso-engineering",
+      "target_repo": "payment-api"
+    },
+    "steps": [
+      {
+        "id": "step-1",
+        "phase": "discovery",
+        "name": "Discover Metadata",
+        "description": "Discover Git branches, variables, secrets, and agent pools.",
+        "status": "completed"
+      },
+      {
+        "id": "step-2",
+        "phase": "mapping",
+        "name": "Map Variables & Secrets",
+        "description": "Map variables and credentials securely.",
+        "status": "completed"
+      },
+      {
+        "id": "step-3",
+        "phase": "translation",
+        "name": "Translate Pipelines",
+        "description": "Generate target GitHub Action workflow YAML files.",
+        "status": "completed"
+      },
+      {
+        "id": "step-4",
+        "phase": "validation",
+        "name": "Validate Migrated Assets",
+        "description": "Verify syntax correctness and security constraints.",
+        "status": "planned"
+      }
+    ],
+    "variables": [
+      {
+        "source_name": "API_URL",
+        "target_name": "API_URL",
+        "target_scope": "repository",
+        "environment_name": null
+      }
+    ],
+    "secrets": [
+      {
+        "source_name": "DATABASE_CONN_STRING",
+        "target_name": "DATABASE_CONN_STRING",
+        "target_scope": "repository",
+        "environment_name": null,
+        "mapping_strategy": "OIDC"
+      },
+      {
+        "source_name": "GITHUB_PAT",
+        "target_name": "GITHUB_PAT",
+        "target_scope": "repository",
+        "environment_name": null,
+        "mapping_strategy": "Repository Secret"
+      }
+    ],
+    "runners": [
+      {
+        "source_pool": "Azure Pipelines",
+        "target_runner_label": "ubuntu-latest",
+        "runner_type": "github_hosted",
+        "recommendation_reason": "Standard pool mapped to default GitHub-hosted runner."
+      },
+      {
+        "source_pool": "Private Windows Pool",
+        "target_runner_label": "windows-latest",
+        "runner_type": "github_hosted",
+        "recommendation_reason": "Windows build agents mapped to GitHub Windows hosted runner."
+      }
+    ],
+    "environments": [
+      {
+        "source_name": "Production",
+        "target_name": "production",
+        "approvals_required": true,
+        "checks_mapped": [
+          "Branch Control Check"
+        ]
+      }
+    ],
+    "confidence_score": 0.98,
+    "next_actions": [
+      "Validate GitHub Action workflow files syntax.",
+      "Manually configure target secrets on GitHub Organization/Repository.",
+      "Verify self-hosted runner execution configurations."
+    ]
+  },
+  "generated_assets": {
+    "workflows": [
+      {
+        "name": "payment-api-ci-workflow",
+        "file_path": ".github/workflows/payment-api-ci.yml",
+        "content": "# Translated from Azure DevOps Pipeline: payment-api-ci\nname: CI Pipeline\n\non:\n  push:\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout Code\n        uses: actions/checkout@v4\n      # Stage: Build\n      # Job: CompileAndTest\n",
+        "is_reusable": false,
+        "description": "Generated workflow translation for Azure DevOps pipeline payment-api-ci."
+      },
+      {
+        "name": "payment-api-release-workflow",
+        "file_path": ".github/workflows/payment-api-release.yml",
+        "content": "# Translated from Azure DevOps Pipeline: payment-api-release\nname: CI Pipeline\n\non:\n  push:\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout Code\n        uses: actions/checkout@v4\n      # Stage: DeployToProd\n",
+        "is_reusable": false,
+        "description": "Generated workflow translation for Azure DevOps pipeline payment-api-release."
+      }
+    ],
+    "reusable_workflows": [],
+    "composite_actions": [],
+    "explanation": "Deterministic asset translations generated successfully."
+  },
+  "validation": {
+    "overall_status": "warning",
+    "checks": [
+      {
+        "name": "repository_migration_scope",
+        "category": "repository",
+        "status": "passed",
+        "message": "Repository payment-api matches scope limit rules.",
+        "remediation": null
+      },
+      {
+        "name": "default_branch_check",
+        "category": "repository",
+        "status": "passed",
+        "message": "Default branch is mapped to 'main'.",
+        "remediation": null
+      },
+      {
+        "name": "workflow_syntax_check",
+        "category": "syntax",
+        "status": "passed",
+        "message": "Workflow .github/workflows/payment-api-ci.yml parsed successfully as valid YAML with standard Action root keys.",
+        "remediation": null
+      },
+      {
+        "name": "workflow_syntax_check",
+        "category": "syntax",
+        "status": "passed",
+        "message": "Workflow .github/workflows/payment-api-release.yml parsed successfully as valid YAML with standard Action root keys.",
+        "remediation": null
+      },
+      {
+        "name": "runner_mapping_check",
+        "category": "runners",
+        "status": "passed",
+        "message": "Source pool 'Azure Pipelines' successfully mapped to runner 'ubuntu-latest'.",
+        "remediation": null
+      },
+      {
+        "name": "runner_mapping_check",
+        "category": "runners",
+        "status": "passed",
+        "message": "Source pool 'Private Windows Pool' successfully mapped to runner 'windows-latest'.",
+        "remediation": null
+      },
+      {
+        "name": "secret_safety_check",
+        "category": "secrets",
+        "status": "passed",
+        "message": "Secret 'DATABASE_CONN_STRING' successfully mapped to target placeholder 'DATABASE_CONN_STRING'. No credential values exposed.",
+        "remediation": null
+      },
+      {
+        "name": "secret_safety_check",
+        "category": "secrets",
+        "status": "passed",
+        "message": "Secret 'GITHUB_PAT' successfully mapped to target placeholder 'GITHUB_PAT'. No credential values exposed.",
+        "remediation": null
+      }
+    ],
+    "validated_at": "2026-08-02T14:40:26.147Z"
+  },
+  "recommendations": {
+    "unsupported_features": [
+      {
+        "feature_name": "Classic Release Pipelines",
+        "location": "Pipeline payment-api-release",
+        "description": "Classic Release UI Pipelines do not have direct YAML configurations in GitHub Actions.",
+        "impact": "degraded",
+        "recommendation": "Refactor classic release pipeline stages into environment-specific jobs in the main workflow YAML."
+      }
+    ],
+    "risk_assessment": [
+      {
+        "category": "security",
+        "severity": "medium",
+        "description": "2 secrets are required. Direct credential values are not migrated.",
+        "mitigation": "Configure values manually in target GitHub Action repository secrets before executing workflows."
+      }
+    ],
+    "rollback_plan": [
+      {
+        "order": 1,
+        "action": "Delete generated workflows",
+        "description": "Remove workflow YAML files from target repository branch .github/workflows/.",
+        "verification_step": "Verify .github/workflows directory is clean or reverted to original branch commit."
+      },
+      {
+        "order": 2,
+        "action": "Clean target configurations",
+        "description": "Delete environment entries, repository variables, and secret mappings created during the execution.",
+        "verification_step": "Check repository settings UI to verify clean state."
+      },
+      {
+        "order": 3,
+        "action": "Archive GitHub repository",
+        "description": "If the target repository was newly created, delete or rename it to free the namespace.",
+        "verification_step": "Verify target URL returns 404."
+      }
+    ]
+  },
+  "confidence_score": 0.98,
+  "next_actions": [
+    "Validate GitHub Action workflow files syntax.",
+    "Manually configure target secrets on GitHub Organization/Repository.",
+    "Verify self-hosted runner execution configurations."
+  ]
+}
