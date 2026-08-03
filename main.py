@@ -167,19 +167,10 @@ class GitHubRemoteExecutor:
         visibility = "--private" if private else "--public"
         env = os.environ.copy()
         env["GH_TOKEN"] = self.token
-
-        # Ensure the target URL is a git push URL. Prefer the .git form for git operations.
-        push_url = target_url.rstrip("/")
-        if push_url.startswith("https://") and not push_url.endswith(".git"):
-            push_url = push_url + ".git"
-
-        # When pushing over HTTPS, embed the token in the URL so git can authenticate non-interactively.
-        # This is a transient URL used only for the push command in this process.
-        push_url_for_git = push_url
-        if push_url_for_git.startswith("https://") and self.token:
-            # Insert token after the scheme: https://<token>@github.com/owner/repo.git
-            push_url_for_git = push_url_for_git.replace("https://", f"https://{self.token}@", 1)
-        command = ["gh", "repo", "create", f"{organization}/{repository}", visibility, "--source=.", "--remote=origin"]
+        # Create the repository server-side only. Do not ask `gh` to add a remote from this process
+        # because `gh` will try to add the remote in the current working directory which may be different
+        # from the generated output directory. The agent will add the authenticated remote later.
+        command = ["gh", "repo", "create", f"{organization}/{repository}", visibility]
         result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip() or "GitHub CLI repository creation failed."
@@ -220,6 +211,18 @@ class GitHubRemoteExecutor:
 
         env = os.environ.copy()
         env["GH_TOKEN"] = self.token
+
+        # Ensure the target URL is a git push URL. Prefer the .git form for git operations.
+        push_url = target_url.rstrip("/")
+        if push_url.startswith("https://") and not push_url.endswith(".git"):
+            push_url = push_url + ".git"
+
+        # When pushing over HTTPS, embed the token in the URL so git can authenticate non-interactively.
+        # This is a transient URL used only for the push command in this process.
+        push_url_for_git = push_url
+        if push_url_for_git.startswith("https://") and self.token:
+            # Insert token after the scheme: https://<token>@github.com/owner/repo.git
+            push_url_for_git = push_url_for_git.replace("https://", f"https://{self.token}@", 1)
         is_git_repo = (local_path / ".git").exists()
         if not is_git_repo:
             commands = [
@@ -244,7 +247,7 @@ class GitHubRemoteExecutor:
         subprocess.run(["git", "config", "user.name", "ado2github-ai-migrator-agent"], cwd=local_path, capture_output=True, text=True, env=env, check=False)
         subprocess.run(["git", "config", "user.email", "agent@example.com"], cwd=local_path, capture_output=True, text=True, env=env, check=False)
         subprocess.run(["git", "remote", "remove", "origin"], cwd=local_path, capture_output=True, text=True, env=env, check=False)
-        subprocess.run(["git", "remote", "add", "origin", target_url], cwd=local_path, capture_output=True, text=True, env=env, check=False)
+        subprocess.run(["git", "remote", "add", "origin", push_url_for_git], cwd=local_path, capture_output=True, text=True, env=env, check=False)
         subprocess.run(["git", "add", "."], cwd=local_path, capture_output=True, text=True, env=env, check=False)
         commit_result = subprocess.run(["git", "commit", "-m", "Apply migration workflow assets"], cwd=local_path, capture_output=True, text=True, env=env, check=False)
         if commit_result.returncode != 0 and "nothing to commit" not in commit_result.stderr.lower():
