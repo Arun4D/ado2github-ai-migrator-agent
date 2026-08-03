@@ -158,6 +158,16 @@ Generate example input and output JSON.
 
 ### Phase 12
 
+Generate prompt for actual migration execution.
+
+- Create prompts/14_actual_migrate.md
+- Document the full migration execution flow for Git repository content, workflow assets, and reports
+- Include optional remote GitHub repository creation and push behavior when credentials are supplied
+- Preserve repository history, branches, and tags where supported by the source and the available Git tooling
+- Keep all execution deterministic and safe
+
+### Phase 13
+
 Review the entire project.
 
 Ensure
@@ -168,6 +178,8 @@ Ensure
 - No placeholders
 - No missing files
 - All modules integrate correctly
+- The migration prompt and implementation are aligned on repository-content migration semantics
+- The README and prompts explain the distinction between local artifact generation and optional remote repository creation
 
 ## Coding Standards
 

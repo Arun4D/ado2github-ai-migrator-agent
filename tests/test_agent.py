@@ -2,10 +2,11 @@ import asyncio
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
-from main import AdoGitHubMigrationAgent
+from main import AdoGitHubMigrationAgent, build_example_input_payload, write_example_input_file, resolve_migration_paths
 from prompts import PromptCache, PromptLoader, PromptManager, PROMPT_DIR
 from schemas.discovery import AdoDiscoveryData, AdoRepository, AdoPipeline, AdoVariable, AdoAgentPool, AdoEnvironment
 from schemas.migration_plan import MigrationPlan, RepoMapping
@@ -66,7 +67,108 @@ class MigrationAgentTests(unittest.TestCase):
             text=True,
         )
         output = json.loads(process.stdout)
-        self.assertEqual(output["status"], "dry_run")
+        self.assertEqual(output["status"], "success")
+
+    def test_example_input_payload_is_generated_from_source_and_target(self) -> None:
+        payload = build_example_input_payload(
+            source={"organization": "ado", "project": "project", "repository": "source"},
+            target={"organization": "github", "repository": "target"},
+        )
+        self.assertEqual(payload["source"]["repository"], "source")
+        self.assertEqual(payload["target"]["repository"], "target")
+        self.assertEqual(payload["discovery_data"]["repositories"][0]["name"], "source")
+        self.assertEqual(payload["discovery_data"]["pipelines"][0]["name"], "source build")
+
+    def test_example_input_file_can_be_written_to_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "example_input.json"
+            written_path = write_example_input_file(
+                output_path,
+                source={"organization": "ado", "project": "project", "repository": "source"},
+                target={"organization": "github", "repository": "target"},
+            )
+            self.assertEqual(written_path, output_path)
+            self.assertTrue(output_path.exists())
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["source"]["repository"], "source")
+
+    def test_actual_migrate_writes_local_assets_and_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            plan_result = asyncio.run(
+                self.agent.plan(
+                    "migrate",
+                    {
+                        "source": {"organization": "ado", "project": "project", "repository": "source"},
+                        "target": {"organization": "github", "repository": "target"},
+                    },
+                )
+            )
+            migrated = asyncio.run(self.agent.execute(plan_result, mode="migrate", output_dir=output_dir))
+            self.assertEqual(migrated["status"], "migrated")
+            self.assertTrue((output_dir / ".github" / "workflows").exists())
+            self.assertTrue((output_dir / "migration_report.md").exists())
+            self.assertTrue((output_dir / "migration_report.json").exists())
+
+    def test_remote_repository_creation_can_be_executed(self) -> None:
+        class FakeRemoteExecutor:
+            def __init__(self) -> None:
+                self.created_repositories: list[tuple[str, str, bool]] = []
+                self.pushed_directories: list[tuple[Path, str]] = []
+                self.cloned_repositories: list[tuple[str, Path]] = []
+
+            def create_repository(self, organization: str, repository: str, private: bool = True) -> dict[str, str]:
+                self.created_repositories.append((organization, repository, private))
+                return {"html_url": f"https://github.com/{organization}/{repository}"}
+
+            def clone_repository(self, source_url: str, destination_path: Path) -> dict[str, str]:
+                self.cloned_repositories.append((source_url, destination_path))
+                destination_path.mkdir(parents=True, exist_ok=True)
+                return {"status": "cloned"}
+
+            def push_directory(self, local_path: Path, target_url: str) -> dict[str, str]:
+                self.pushed_directories.append((local_path, target_url))
+                return {"status": "ok"}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            plan_result = asyncio.run(
+                self.agent.plan(
+                    "migrate",
+                    {
+                        "source": {"organization": "ado", "project": "project", "repository": "source"},
+                        "target": {"organization": "github", "repository": "target"},
+                    },
+                )
+            )
+            executor = FakeRemoteExecutor()
+            migrated = asyncio.run(
+                self.agent.execute(
+                    plan_result,
+                    mode="migrate",
+                    output_dir=output_dir,
+                    github_token="fake-token",
+                    create_remote=True,
+                    remote_executor=executor,
+                    source_repo_url="https://dev.azure.com/ado/project/_git/source",
+                )
+            )
+            self.assertEqual(migrated["status"], "migrated")
+            self.assertEqual(executor.created_repositories[0][0], "github")
+            self.assertEqual(executor.created_repositories[0][1], "target")
+            self.assertEqual(executor.pushed_directories[0][1], "https://github.com/github/target")
+            self.assertEqual(executor.cloned_repositories[0][0], "https://dev.azure.com/ado/project/_git/source")
+
+    def test_repo_name_is_used_for_default_output_paths(self) -> None:
+        paths = resolve_migration_paths(
+            source={"organization": "ado", "project": "project", "repository": "Terraform-demo"},
+            target={"organization": "github", "repository": "Terraform-demo"},
+            output_dir=None,
+            example_input_output=None,
+        )
+        self.assertIn("terraform-demo", str(paths["input_path"]))
+        self.assertIn("terraform-demo", str(paths["output_dir"]))
+        self.assertTrue(str(paths["output_dir"]).endswith("migration"))
 
     def test_prompt_cache_and_loader(self) -> None:
         cache = PromptCache()

@@ -1,10 +1,24 @@
 # Azure DevOps to GitHub Actions Migration Agent
 
-An independent, repository-scoped plugin for `Arun4D/slm-enterprise-ai-platform`. It plans the migration of one Azure DevOps Git repository and its build, deployment, and release pipelines to one GitHub repository using GitHub Actions.
+This repository contains a standalone migration-planning agent for moving one Azure DevOps repository and its pipelines to GitHub Actions. It is intentionally safe for sandbox use because the current implementation focuses on planning, validation, and reporting rather than writing changes to GitHub or Azure DevOps.
 
-## Target Architecture
+## What this agent does today
 
-The agent follows this modular structure:
+The supported workflow is:
+
+1. Plan the migration
+2. Run a dry-run validation of the generated plan
+3. Generate a report with recommendations and rollback notes
+
+The current implementation does not perform remote writes to GitHub or Azure DevOps. That makes it safe to run locally and review the migration plan before any real deployment work begins.
+
+## Why the examples folder exists
+
+The folder [examples](examples) contains generated sample artifacts for the repository migration flow. When you run the agent against a repository, it now creates a repository-scoped subfolder named after the target repository and writes the generated input payload and migration outputs there.
+
+For example, a migration for Terraform-demo produces a folder such as [examples/terraform-demo](examples/terraform-demo) containing the generated files. The root [examples](examples) folder is therefore a working output area rather than a hardcoded example store.
+
+## Project structure
 
 ```text
 ado2github-ai-migrator-agent/
@@ -34,20 +48,11 @@ ado2github-ai-migrator-agent/
     └── test_agent.py
 ```
 
-## Key Components
+## Step-by-step workflow
 
-1. **`main.py`**: Entry point loaded by the enterprise orchestrator plugin manager. It orchestrates the migration plan, registers tools, handles errors, and compiles output.
-2. **`prompts.py`**: Manages template formatting, loading, and memory-caching of the modular system instructions in `prompts/`.
-3. **`tools.py`**: Declares metadata-only tool definitions for discovery, repo migration, and validation.
-4. **`planners.py`**: Houses reasoning flow for components (Git history, Pipelines, Variables, Secrets, Environments, Runners) using the SLM.
-5. **`validation_engine.py`**: Validates workflow syntax, variable mappings, scope boundaries, and flags potential risks.
-6. **`reporting_engine.py`**: Assembles comprehensive Markdown and JSON reports (Migration, Validation, Risk, Rollback, Executive Summary).
-7. **`schemas/`**: Pydantic models enforcing structural parsing of discovery context and migration plans.
-8. **`templates/`**: Baseline GitHub Action workflows, reusable workflows, and composite actions templates.
+### 1. Plan the migration
 
-## Standalone Execution
-
-The agent runs independently without external LLM connections by returning standard mock validations or dry-run schemas, making it safe for sandbox environments:
+Run the CLI with the Azure DevOps and GitHub repository details you want to evaluate.
 
 ```powershell
 python main.py `
@@ -55,12 +60,134 @@ python main.py `
   --ado-project platform `
   --ado-repository api-service `
   --github-organization contoso-engineering `
-  --github-repository api-service
+  --github-repository api-service `
+  --mode plan
 ```
 
-## Test Suite
+This prints the generated migration plan and writes a generated input payload to a repository-scoped folder such as [examples/terraform-demo/example_input.json](examples/terraform-demo/example_input.json) unless you override the output path.
 
-Verify all components pass SOLID and Pydantic validation checks:
+### 2. Dry-run execution
+
+Use the dry-run mode to validate the plan without writing files.
+
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --mode dry-run
+```
+
+The result includes:
+
+- migration plan steps
+- generated assets metadata
+- validation status
+- recommendations and rollback notes
+
+### 3. Report generation
+
+Use report mode when you want a Markdown report written to disk.
+
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --mode report `
+  --output-dir C:\temp\migration-output
+```
+
+This writes a report file at the requested output directory.
+
+### 4. Actual migrate
+
+Use migrate mode to materialize the generated Git repository, workflow, release, deployment, and report assets locally. If you also pass a GitHub token and the --create-remote flag, the agent will clone the Azure DevOps repository content, preserve repository history where supported, and push the migrated repository content to the target GitHub repository.
+
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --mode migrate `
+  --output-dir C:\temp\migration-output
+```
+
+This creates a repository-scoped output folder under the selected output directory, including:
+
+- workflow files under .github/workflows
+- a repository README
+- release/deployment workflow files
+- migration_report.md
+- migration_report.json
+
+To enable the optional remote GitHub creation flow, add:
+
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --mode migrate `
+  --output-dir C:\temp\migration-output `
+  --github-token $env:GITHUB_TOKEN `
+  --create-remote
+```
+
+You can also run it programmatically from Python:
+
+```python
+import asyncio
+import json
+from main import AdoGitHubMigrationAgent
+
+agent = AdoGitHubMigrationAgent()
+context = {
+    "source": {
+        "organization": "contoso",
+        "project": "platform",
+        "repository": "api-service",
+    },
+    "target": {
+        "organization": "contoso-engineering",
+        "repository": "api-service",
+    },
+}
+
+plan_result = asyncio.run(agent.plan("Plan migration", context))
+print(json.dumps(plan_result["migration_plan"], indent=2))
+
+dry_run_result = asyncio.run(agent.execute(plan_result))
+print(json.dumps(dry_run_result, indent=2))
+```
+
+## Input and output files
+
+You can supply your own discovery metadata by passing a JSON file with the CLI option:
+
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --discovery-file C:\temp\discovery.json
+```
+
+If you do not pass a discovery file, the agent generates a reasonable discovery payload from the repository scope you provided.
+
+## Test suite
+
+Verify the implementation and regression tests:
 
 ```powershell
 python -m unittest discover -s tests -v
