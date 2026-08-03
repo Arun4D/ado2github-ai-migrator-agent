@@ -167,10 +167,27 @@ class GitHubRemoteExecutor:
         visibility = "--private" if private else "--public"
         env = os.environ.copy()
         env["GH_TOKEN"] = self.token
-        command = ["gh", "repo", "create", f"{organization}/{repository}", visibility, "--confirm"]
+
+        # Ensure the target URL is a git push URL. Prefer the .git form for git operations.
+        push_url = target_url.rstrip("/")
+        if push_url.startswith("https://") and not push_url.endswith(".git"):
+            push_url = push_url + ".git"
+
+        # When pushing over HTTPS, embed the token in the URL so git can authenticate non-interactively.
+        # This is a transient URL used only for the push command in this process.
+        push_url_for_git = push_url
+        if push_url_for_git.startswith("https://") and self.token:
+            # Insert token after the scheme: https://<token>@github.com/owner/repo.git
+            push_url_for_git = push_url_for_git.replace("https://", f"https://{self.token}@", 1)
+        command = ["gh", "repo", "create", f"{organization}/{repository}", visibility, "--source=.", "--remote=origin"]
         result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip() or "GitHub CLI repository creation failed."
+            if "Resource not accessible by personal access token" in error or "createRepository" in error:
+                error = (
+                    "GitHub repository creation failed because the supplied token does not have repository creation permissions. "
+                    "Use a token with repo:create scope or create the repository manually first."
+                )
             raise RuntimeError(error)
 
         return {
@@ -209,7 +226,7 @@ class GitHubRemoteExecutor:
                 (["git", "init", "-b", "main"], "initialize git repository"),
                 (["git", "config", "user.name", "ado2github-ai-migrator-agent"], "configure git user name"),
                 (["git", "config", "user.email", "agent@example.com"], "configure git user email"),
-                (["git", "remote", "add", "origin", target_url], "add origin remote"),
+                (["git", "remote", "add", "origin", push_url_for_git], "add origin remote"),
                 (["git", "add", "."], "stage migration artifacts"),
                 (["git", "commit", "-m", "Initial migration from Azure DevOps"], "create initial commit"),
                 (["git", "push", "-u", "origin", "main"], "push to GitHub"),
@@ -219,7 +236,7 @@ class GitHubRemoteExecutor:
                 if result.returncode != 0:
                     if command[:2] == ["git", "commit"] and "nothing to commit" in result.stderr.lower():
                         continue
-                    if command[:3] == ["git", "remote", "add", "origin"] and "already exists" in result.stderr.lower():
+                    if command[:4] == ["git", "remote", "add", "origin"] and "already exists" in result.stderr.lower():
                         continue
                     raise RuntimeError(f"Failed to {purpose}: {result.stderr.strip() or result.stdout.strip()}")
             return {"status": "pushed", "target_url": target_url, "mode": "initial"}
