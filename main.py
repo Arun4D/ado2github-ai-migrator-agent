@@ -195,11 +195,11 @@ class LocalSLMService:
         )
         
         try:
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with urllib.request.urlopen(req, timeout=300) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
                 return res_data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.error(f"Local SLM generate failed: {e}")
+            logger.warning(f"Local SLM generate failed: {e}")
             raise RuntimeError(f"Local SLM generation failed: {e}")
 
 
