@@ -106,7 +106,13 @@ This writes a report file at the requested output directory.
 
 ### 4. Actual migrate
 
-Use migrate mode to materialize the generated Git repository, workflow, release, deployment, and report assets locally. If you also pass a GitHub token and the --create-remote flag, the agent will clone the Azure DevOps repository content, fetch all remote branches as local heads, fetch all tags, apply/commit the generated GitHub Action workflows on the default branch, and then mirror-push all history, branches, and tags to the target GitHub repository. This includes full support for translating YAML pipelines, Classic Build pipelines, and Classic Release/CD pipelines into their appropriate GitHub Actions equivalents.
+Use migrate mode to materialize the generated Git repository, translated workflows, and report assets locally. 
+
+During execution:
+1. **Clean Workspace Workspace**: The agent automatically clones the Azure DevOps repository content to a secure system temporary workspace that is automatically deleted when the migration completes (preventing local directory pollution).
+2. **Auto-Scanning of YAML Pipelines**: The agent recursively scans the cloned repository for Azure DevOps YAML pipeline files (e.g. `azure-pipelines.yml`) and automatically translates them into native GitHub Actions workflows.
+3. **No Default Template Pollution**: Generic skeleton files like `settings.yml`, default release/deployment workflows, and default `README.md` placeholders are never generated or overwritten, ensuring your output directory contains only your real repository files and actual translated workflows.
+4. **Mirror-Pushing (Optional)**: If you pass a GitHub token and the `--create-remote` flag, the agent creates the remote GitHub repository, checks out all history, tags, and branches from Azure DevOps, applies the translated workflows, and pushes all history cleanly to the target GitHub repository.
 
 ```powershell
 python main.py `
@@ -121,13 +127,11 @@ python main.py `
 
 This creates a repository-scoped output folder under the selected output directory, including:
 
-- workflow files under .github/workflows
-- a repository README
-- release/deployment workflow files
-- migration_report.md
-- migration_report.json
+- translated workflow files under `.github/workflows/`
+- `migration_report.md`
+- `migration_report.json`
 
-To enable the optional remote GitHub creation flow, add:
+To enable the optional remote GitHub creation and mirror-push flow, add:
 
 ```powershell
 python main.py `
@@ -140,6 +144,27 @@ python main.py `
   --output-dir C:\temp\migration-output `
   --github-token $env:GITHUB_TOKEN `
   --create-remote
+```
+
+### Running Locally with an LLM (e.g., Qwen/Qwen2.5-Coder)
+
+By default, running locally utilizes a smart, deterministic Python YAML translator fallback. If you want to use a running instance of `Qwen/Qwen2.5-Coder-7B-Instruct` (or any other OpenAI-compatible model API) to translate the pipelines, you can specify the SLM parameters:
+
+```powershell
+ollama run qwen2.5-coder:7b
+```
+```powershell
+python main.py `
+  --ado-organization contoso `
+  --ado-project platform `
+  --ado-repository api-service `
+  --github-organization contoso-engineering `
+  --github-repository api-service `
+  --mode migrate `
+  --output-dir C:\temp\migration-output `
+  --slm-api-base "http://localhost:11434/v1" `
+  --slm-api-key "ollama" `
+  --slm-model "qwen2.5-coder:7b"
 ```
 
 You can also run it programmatically from Python:

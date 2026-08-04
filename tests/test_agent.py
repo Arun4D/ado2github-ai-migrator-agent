@@ -16,6 +16,26 @@ from reporting_engine import ReportingEngine
 from schemas.github_actions import GeneratedAssets, GeneratedWorkflow
 
 
+class FakeRemoteExecutor:
+    def __init__(self) -> None:
+        self.created_repositories: list[tuple[str, str, bool]] = []
+        self.pushed_directories: list[tuple[Path, str]] = []
+        self.cloned_repositories: list[tuple[str, Path]] = []
+
+    def create_repository(self, organization: str, repository: str, private: bool = True) -> dict[str, str]:
+        self.created_repositories.append((organization, repository, private))
+        return {"html_url": f"https://github.com/{organization}/{repository}"}
+
+    def clone_repository(self, source_url: str, destination_path: Path) -> dict[str, str]:
+        self.cloned_repositories.append((source_url, destination_path))
+        destination_path.mkdir(parents=True, exist_ok=True)
+        return {"status": "cloned"}
+
+    def push_directory(self, local_path: Path, target_url: str) -> dict[str, str]:
+        self.pushed_directories.append((local_path, target_url))
+        return {"status": "ok"}
+
+
 class MigrationAgentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.agent = AdoGitHubMigrationAgent()
@@ -104,32 +124,21 @@ class MigrationAgentTests(unittest.TestCase):
                     },
                 )
             )
-            migrated = asyncio.run(self.agent.execute(plan_result, mode="migrate", output_dir=output_dir))
+            executor = FakeRemoteExecutor()
+            migrated = asyncio.run(
+                self.agent.execute(
+                    plan_result,
+                    mode="migrate",
+                    output_dir=output_dir,
+                    remote_executor=executor,
+                )
+            )
             self.assertEqual(migrated["status"], "migrated")
             self.assertTrue((output_dir / ".github" / "workflows").exists())
             self.assertTrue((output_dir / "migration_report.md").exists())
             self.assertTrue((output_dir / "migration_report.json").exists())
 
     def test_remote_repository_creation_can_be_executed(self) -> None:
-        class FakeRemoteExecutor:
-            def __init__(self) -> None:
-                self.created_repositories: list[tuple[str, str, bool]] = []
-                self.pushed_directories: list[tuple[Path, str]] = []
-                self.cloned_repositories: list[tuple[str, Path]] = []
-
-            def create_repository(self, organization: str, repository: str, private: bool = True) -> dict[str, str]:
-                self.created_repositories.append((organization, repository, private))
-                return {"html_url": f"https://github.com/{organization}/{repository}"}
-
-            def clone_repository(self, source_url: str, destination_path: Path) -> dict[str, str]:
-                self.cloned_repositories.append((source_url, destination_path))
-                destination_path.mkdir(parents=True, exist_ok=True)
-                return {"status": "cloned"}
-
-            def push_directory(self, local_path: Path, target_url: str) -> dict[str, str]:
-                self.pushed_directories.append((local_path, target_url))
-                return {"status": "ok"}
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             plan_result = asyncio.run(
@@ -391,6 +400,84 @@ class MigrationAgentTests(unittest.TestCase):
         self.assertIn("name: YAML CI (YAML Build)", content)
         self.assertIn("push:", content)
         self.assertIn("pull_request:", content)
+
+    def test_execute_scans_and_translates_ado_pipeline_files(self) -> None:
+        class PipelineCloningExecutor(FakeRemoteExecutor):
+            def clone_repository(self, source_url: str, destination_path: Path) -> dict[str, str]:
+                super().clone_repository(source_url, destination_path)
+                pipeline_file = destination_path / "azure-pipelines.yml"
+                pipeline_content = (
+                    "trigger:\n"
+                    "  - main\n"
+                    "steps:\n"
+                    "  - task: CmdLine@2\n"
+                    "    inputs:\n"
+                    "      script: echo 'Hello World'\n"
+                )
+                pipeline_file.write_text(pipeline_content, encoding="utf-8")
+                return {"status": "cloned"}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            plan_result = asyncio.run(
+                self.agent.plan(
+                    "migrate",
+                    {
+                        "source": {"organization": "ado", "project": "project", "repository": "source"},
+                        "target": {"organization": "github", "repository": "target"},
+                    },
+                )
+            )
+            executor = PipelineCloningExecutor()
+            migrated = asyncio.run(
+                self.agent.execute(
+                    plan_result,
+                    mode="migrate",
+                    output_dir=output_dir,
+                    remote_executor=executor,
+                )
+            )
+            self.assertEqual(migrated["status"], "migrated")
+            target_workflow = output_dir / ".github" / "workflows" / "azure-pipelines.yml"
+            self.assertTrue(target_workflow.exists())
+            content = target_workflow.read_text(encoding="utf-8")
+            self.assertIn("Translated from Azure DevOps YAML Pipeline", content)
+            self.assertIn("CmdLine@2", content)
+
+    def test_parse_and_translate_ado_yaml_fully_translates_stages_jobs_tasks(self) -> None:
+        from main import parse_and_translate_ado_yaml
+        content = (
+            "trigger:\n"
+            "  - main\n"
+            "pool:\n"
+            "  vmImage: ubuntu-latest\n"
+            "stages:\n"
+            "  - stage: Build\n"
+            "    jobs:\n"
+            "      - job: Compile\n"
+            "        steps:\n"
+            "          - task: AzureCLI@2\n"
+            "            displayName: run cli\n"
+            "            inputs:\n"
+            "              azureSubscription: sub-name\n"
+            "              inlineScript: echo 1\n"
+            "  - stage: Dev\n"
+            "    jobs:\n"
+            "      - job: Deploy\n"
+            "        dependsOn: Compile\n"
+            "        steps:\n"
+            "          - checkout: none\n"
+            "          - task: DownloadBuildArtifacts@0\n"
+            "            inputs:\n"
+            "              artifactName: drop\n"
+        )
+        translated = parse_and_translate_ado_yaml(content, "azure-pipelines.yml")
+        self.assertIn("name: Azure Pipelines", translated)
+        self.assertIn("build_compile:", translated)
+        self.assertIn("dev_deploy:", translated)
+        self.assertIn("needs:\n      - build_compile", translated)
+        self.assertIn("azure/login@v2", translated)
+        self.assertIn("actions/download-artifact@v4", translated)
 
 
 if __name__ == "__main__":

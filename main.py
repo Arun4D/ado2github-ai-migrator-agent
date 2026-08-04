@@ -7,6 +7,8 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
+import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Protocol, Optional, Union
 
@@ -154,6 +156,53 @@ class OrchestratorSLMService(Protocol):
     def generate_sync(self, prompt: str, system_prompt: Optional[str] = None) -> str: ...
 
 
+class LocalSLMService:
+    """Local OpenAI-compatible SLM service client for running outside the enterprise platform."""
+    
+    def __init__(self, api_base: str, model: str, api_key: str) -> None:
+        self.available = True
+        self.api_base = api_base
+        self.model = model
+        self.api_key = api_key
+
+    def classify_intent_sync(self, intent: str, choices: list[tuple[str, str]]) -> str:
+        return "ado_github_migration_agent"
+
+    def generate_sync(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        import urllib.request
+        import urllib.error
+        
+        url = f"{self.api_base.rstrip('/')}/chat/completions"
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1
+        }
+        
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            },
+            method="POST"
+        )
+        
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                return res_data["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.error(f"Local SLM generate failed: {e}")
+            raise RuntimeError(f"Local SLM generation failed: {e}")
+
+
 class GitHubRemoteExecutor:
     """Create a remote GitHub repository and push generated content to it using the GitHub CLI."""
 
@@ -193,7 +242,9 @@ class GitHubRemoteExecutor:
         if destination_path.exists() and any(destination_path.iterdir()):
             shutil.rmtree(destination_path)
         destination_path.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(["git", "clone", source_url, str(destination_path)], capture_output=True, text=True, check=False)
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        result = subprocess.run(["git", "clone", source_url, str(destination_path)], capture_output=True, text=True, env=env, check=False)
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip() or "Git clone failed."
             raise RuntimeError(error)
@@ -204,6 +255,7 @@ class GitHubRemoteExecutor:
             cwd=str(destination_path),
             capture_output=True,
             text=True,
+            env=env,
             check=False,
         )
         if fetch_branches.returncode != 0:
@@ -217,6 +269,7 @@ class GitHubRemoteExecutor:
             cwd=str(destination_path),
             capture_output=True,
             text=True,
+            env=env,
             check=False,
         )
         if fetch_tags.returncode != 0:
@@ -238,6 +291,7 @@ class GitHubRemoteExecutor:
 
         env = os.environ.copy()
         env["GH_TOKEN"] = self.token
+        env["GIT_TERMINAL_PROMPT"] = "0"
 
         # Ensure the target URL is a git push URL. Prefer the .git form for git operations.
         push_url = target_url.rstrip("/")
@@ -284,6 +338,379 @@ class GitHubRemoteExecutor:
             raise RuntimeError(f"Failed to mirror repository to GitHub: {push_result.stderr.strip() or push_result.stdout.strip()}")
 
         return {"status": "pushed", "target_url": target_url, "mode": "mirror"}
+
+
+def is_ado_pipeline_file(content: str) -> bool:
+    """Detect if a file contains Azure DevOps pipeline syntax/tasks."""
+    content_lower = content.lower()
+    if "- task:" in content_lower:
+        return True
+    if "pool:" in content_lower and ("steps:" in content_lower or "stages:" in content_lower):
+        return True
+    return False
+
+
+def map_ado_step_to_gha(step: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Map a single Azure DevOps pipeline step/task to GitHub Actions steps."""
+    gha_steps = []
+    
+    # 1. Check for checkout
+    if "checkout" in step:
+        val = step["checkout"]
+        if val == "self":
+            gha_steps.append({
+                "name": "Checkout Code",
+                "uses": "actions/checkout@v4"
+            })
+        return gha_steps
+
+    display_name = step.get("displayName")
+    name_field = {"name": display_name} if display_name else {}
+
+    # 2. Check for simple scripts
+    if "script" in step:
+        gha_steps.append({
+            **name_field,
+            "run": step["script"]
+        })
+        return gha_steps
+    if "bash" in step:
+        gha_steps.append({
+            **name_field,
+            "run": step["bash"],
+            "shell": "bash"
+        })
+        return gha_steps
+    if "powershell" in step:
+        gha_steps.append({
+            **name_field,
+            "run": step["powershell"],
+            "shell": "powershell"
+        })
+        return gha_steps
+    if "pwsh" in step:
+        gha_steps.append({
+            **name_field,
+            "run": step["pwsh"],
+            "shell": "pwsh"
+        })
+        return gha_steps
+
+    # 3. Check for task
+    task = step.get("task")
+    if task:
+        inputs = step.get("inputs", {})
+        task_clean = task.split("@")[0].lower()
+        
+        if task_clean == "azurecli":
+            subscription = inputs.get("azureSubscription")
+            inline_script = inputs.get("inlineScript")
+            script_path = inputs.get("scriptPath")
+            script_type = inputs.get("scriptType")
+            
+            # Add azure login step
+            gha_steps.append({
+                "name": f"Azure Login ({subscription})" if subscription else "Azure Login",
+                "uses": "azure/login@v2",
+                "with": {
+                    "creds": f"${{{{ secrets.AZURE_CREDENTIALS_{subscription.upper().replace('-', '_')} }}}}" if subscription else "${{ secrets.AZURE_CREDENTIALS }}"
+                }
+            })
+            
+            # Add CLI execution step
+            cli_step = {
+                "name": display_name or "Run Azure CLI",
+                "uses": "azure/CLI@v2",
+                "with": {
+                    "azcliversion": "latest"
+                }
+            }
+            if inline_script:
+                cli_step["with"]["inlineScript"] = inline_script
+            elif script_path:
+                cli_step["with"]["inlineScript"] = f"bash {script_path}"
+            
+            gha_steps.append(cli_step)
+            
+        elif task_clean in ("publishbuildartifacts", "publishpipelineartifact"):
+            path = inputs.get("PathtoPublish") or inputs.get("targetPath") or inputs.get("path") or "$(Build.ArtifactStagingDirectory)"
+            path = path.replace("$(Build.ArtifactStagingDirectory)", ".")
+            name = inputs.get("ArtifactName") or inputs.get("artifact") or "drop"
+            gha_steps.append({
+                "name": display_name or "Publish Artifact",
+                "uses": "actions/upload-artifact@v4",
+                "with": {
+                    "name": name,
+                    "path": path
+                }
+            })
+            
+        elif task_clean in ("downloadbuildartifacts", "downloadpipelineartifact"):
+            name = inputs.get("artifactName") or inputs.get("artifact") or "drop"
+            path = inputs.get("downloadPath") or inputs.get("path") or "$(System.ArtifactsDirectory)"
+            path = path.replace("$(System.ArtifactsDirectory)", ".")
+            gha_steps.append({
+                "name": display_name or "Download Artifact",
+                "uses": "actions/download-artifact@v4",
+                "with": {
+                    "name": name,
+                    "path": path
+                }
+            })
+            
+        elif task_clean == "copyfiles":
+            contents = inputs.get("Contents", "**")
+            target_folder = inputs.get("TargetFolder", ".")
+            target_folder = target_folder.replace("$(Build.ArtifactStagingDirectory)", ".")
+            gha_steps.append({
+                "name": display_name or "Copy Files",
+                "run": f"# Copy files from ADO CopyFiles@2\n# Contents: {contents}\n# Target Folder: {target_folder}\nmkdir -p {target_folder}\ncp -r . {target_folder}"
+            })
+            
+        else:
+            input_comments = "\n".join(f"#   {k}: {v}" for k, v in inputs.items())
+            gha_steps.append({
+                "name": display_name or f"Task: {task}",
+                "run": f"# Unmapped ADO Task: {task}\n# Inputs:\n{input_comments}\necho 'Step {task} execution placeholder'"
+            })
+            
+    return gha_steps
+
+
+def parse_and_translate_ado_yaml(content: str, rel_path: str) -> str:
+    """Parse Azure DevOps YAML and map triggers, pool, stages, jobs, and tasks to GitHub Actions."""
+    try:
+        data = yaml.safe_load(content)
+    except Exception as e:
+        return f"# Failed to parse Azure DevOps YAML: {e}\n# Content:\n" + "\n".join(f"# {line}" for line in content.splitlines())
+
+    if not isinstance(data, dict):
+        return f"# Invalid Azure DevOps YAML structure.\n# Content:\n" + "\n".join(f"# {line}" for line in content.splitlines())
+
+    # Trigger mapping
+    trigger = data.get("trigger")
+    on_trigger = {}
+    if trigger is None:
+        on_trigger = {"workflow_dispatch": {}}
+    elif isinstance(trigger, list):
+        on_trigger = {"push": {"branches": trigger}, "workflow_dispatch": {}}
+    elif isinstance(trigger, dict):
+        branches = trigger.get("branches", {})
+        if isinstance(branches, dict):
+            include = branches.get("include", [])
+            on_trigger = {"push": {"branches": include}, "workflow_dispatch": {}}
+        elif isinstance(branches, list):
+            on_trigger = {"push": {"branches": branches}, "workflow_dispatch": {}}
+    else:
+        on_trigger = {"push": {"branches": ["main"]}, "workflow_dispatch": {}}
+
+    # Runner mapping
+    pool = data.get("pool", {})
+    runs_on = "ubuntu-latest"
+    if isinstance(pool, dict):
+        vm_image = pool.get("vmImage")
+        if vm_image:
+            runs_on = vm_image
+    elif isinstance(pool, str):
+        runs_on = pool
+
+    # Pass 1: Build job mapping for dependsOn resolution
+    job_mapping = {}
+    stages = data.get("stages")
+    if isinstance(stages, list):
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_name = stage.get("stage", "stage").lower().replace(" ", "_").replace("-", "_")
+            jobs = stage.get("jobs")
+            if isinstance(jobs, list):
+                for job in jobs:
+                    if not isinstance(job, dict):
+                        continue
+                    job_name_raw = job.get("job", "job")
+                    job_name = f"{stage_name}_{job_name_raw.lower().replace(' ', '_').replace('-', '_')}"
+                    job_mapping[job_name_raw] = job_name
+                    job_mapping[job_name_raw.lower()] = job_name
+    elif "jobs" in data and isinstance(data["jobs"], list):
+        for job in data["jobs"]:
+            if not isinstance(job, dict):
+                continue
+            job_name_raw = job.get("job", "job")
+            job_name = job_name_raw.lower().replace(" ", "_").replace("-", "_")
+            job_mapping[job_name_raw] = job_name
+            job_mapping[job_name_raw.lower()] = job_name
+
+    gha_jobs = {}
+
+    # Case A: stages
+    if isinstance(stages, list):
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_name = stage.get("stage", "stage").lower().replace(" ", "_").replace("-", "_")
+            jobs = stage.get("jobs")
+            if isinstance(jobs, list):
+                for job in jobs:
+                    if not isinstance(job, dict):
+                        continue
+                    job_name_raw = job.get("job", "job")
+                    job_name = f"{stage_name}_{job_name_raw.lower().replace(' ', '_').replace('-', '_')}"
+                    
+                    depends_on = job.get("dependsOn")
+                    needs = []
+                    if depends_on:
+                        if isinstance(depends_on, str):
+                            needs = [job_mapping.get(depends_on, job_mapping.get(depends_on.lower(), depends_on))]
+                        elif isinstance(depends_on, list):
+                            needs = [job_mapping.get(d, job_mapping.get(d.lower(), d)) for d in depends_on]
+
+                    steps_list = job.get("steps", [])
+                    gha_steps = []
+                    
+                    has_checkout_none = False
+                    for step in steps_list:
+                        if isinstance(step, dict) and "checkout" in step and step["checkout"] == "none":
+                            has_checkout_none = True
+                            break
+                    if not has_checkout_none:
+                        gha_steps.append({
+                            "name": "Checkout Code",
+                            "uses": "actions/checkout@v4"
+                        })
+
+                    for step in steps_list:
+                        if isinstance(step, dict):
+                            gha_steps.extend(map_ado_step_to_gha(step))
+
+                    gha_jobs[job_name] = {
+                        "runs-on": runs_on,
+                        "steps": gha_steps
+                    }
+                    if needs:
+                        gha_jobs[job_name]["needs"] = needs
+
+    # Case B: jobs at root
+    elif "jobs" in data and isinstance(data["jobs"], list):
+        for job in data["jobs"]:
+            if not isinstance(job, dict):
+                continue
+            job_name = job.get("job", "job").lower().replace(" ", "_").replace("-", "_")
+            depends_on = job.get("dependsOn")
+            needs = []
+            if depends_on:
+                if isinstance(depends_on, str):
+                    needs = [job_mapping.get(depends_on, job_mapping.get(depends_on.lower(), depends_on))]
+                elif isinstance(depends_on, list):
+                    needs = [job_mapping.get(d, job_mapping.get(d.lower(), d)) for d in depends_on]
+
+            steps_list = job.get("steps", [])
+            gha_steps = []
+            
+            has_checkout_none = False
+            for step in steps_list:
+                if isinstance(step, dict) and "checkout" in step and step["checkout"] == "none":
+                    has_checkout_none = True
+                    break
+            if not has_checkout_none:
+                gha_steps.append({
+                    "name": "Checkout Code",
+                    "uses": "actions/checkout@v4"
+                })
+
+            for step in steps_list:
+                if isinstance(step, dict):
+                    gha_steps.extend(map_ado_step_to_gha(step))
+
+            gha_jobs[job_name] = {
+                "runs-on": runs_on,
+                "steps": gha_steps
+            }
+            if needs:
+                gha_jobs[job_name]["needs"] = needs
+
+    # Case C: steps at root
+    elif "steps" in data and isinstance(data["steps"], list):
+        steps_list = data["steps"]
+        gha_steps = []
+        
+        has_checkout_none = False
+        for step in steps_list:
+            if isinstance(step, dict) and "checkout" in step and step["checkout"] == "none":
+                has_checkout_none = True
+                break
+        if not has_checkout_none:
+            gha_steps.append({
+                "name": "Checkout Code",
+                "uses": "actions/checkout@v4"
+            })
+
+        for step in steps_list:
+            if isinstance(step, dict):
+                gha_steps.extend(map_ado_step_to_gha(step))
+
+        gha_jobs["build"] = {
+            "runs-on": runs_on,
+            "steps": gha_steps
+        }
+
+    # Generate output YAML using PyYAML
+    workflow = {
+        "name": Path(rel_path).stem.replace("-", " ").replace("_", " ").title(),
+        "on": on_trigger,
+        "jobs": gha_jobs
+    }
+
+    import yaml as pyyaml
+    class Dumper(pyyaml.SafeDumper):
+        def increase_indent(self, flow=False, indentless=False):
+            return super(Dumper, self).increase_indent(flow, False)
+            
+    header = (
+        f"# Translated from Azure DevOps YAML Pipeline: {rel_path}\n"
+        "# Replaces original ADO stages and tasks with native GitHub Actions equivalents.\n\n"
+    )
+    return header + pyyaml.dump(workflow, Dumper=Dumper, default_flow_style=False, sort_keys=False)
+
+
+def translate_raw_yaml_pipeline(
+    content: str,
+    rel_path: str,
+    prompt_manager: PromptManager,
+    slm_service: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Translate raw Azure DevOps pipeline YAML file to GitHub Actions workflows."""
+    if slm_service and slm_service.available:
+        translation_rules = prompt_manager.get_prompt("05_yaml_translation.md")
+        combined_prompt = (
+            f"{translation_rules}\n\n"
+            "Please translate the following Azure DevOps pipeline YAML file into GitHub Actions workflows/actions format. "
+            "Output the result as a valid JSON dictionary matching the response schema with 'workflows', "
+            "'reusable_workflows', and 'composite_actions' keys.\n\n"
+            f"File Path: {rel_path}\n"
+            f"YAML Content:\n{content}"
+        )
+        system_prompt = prompt_manager.get_prompt("00_system_prompt.md")
+        try:
+            raw_response = slm_service.generate_sync(combined_prompt, system_prompt=system_prompt)
+            data = json.loads(raw_response)
+            return data.get("workflows", [])
+        except Exception:
+            pass
+
+    # Deterministic smart fallback
+    wf_name = Path(rel_path).stem.replace("-", " ").replace("_", " ").title()
+    target_wf_path = f".github/workflows/{Path(rel_path).stem.lower().replace(' ', '_')}.yml"
+    
+    workflow_content = parse_and_translate_ado_yaml(content, rel_path)
+
+    return [
+        {
+            "name": f"{wf_name}-workflow",
+            "file_path": target_wf_path,
+            "content": workflow_content,
+            "description": f"Generated workflow translation for Azure DevOps YAML pipeline {rel_path}.",
+        }
+    ]
 
 
 class AdoGitHubMigrationAgent(IAgent):
@@ -459,72 +886,97 @@ class AdoGitHubMigrationAgent(IAgent):
             generated_assets = plan.get("generated_assets", {})
             repo_name = plan["analysis"]["target"]["repository"].lower().replace(" ", "-")
 
-            repo_readme = (
-                f"# {plan['analysis']['target']['repository']}\n\n"
-                f"Migrated from Azure DevOps repository {plan['analysis']['source']['repository']}.\n"
-            )
-            repo_readme_path = target_dir / "README.md"
-            repo_readme_path.write_text(repo_readme, encoding="utf-8")
-            created_files.append(str(repo_readme_path))
+            source_url = source_repo_url or plan.get("analysis", {}).get("source", {}).get("repository_url")
+            temp_workspace = None
+            clone_dir = None
+            executor = remote_executor or GitHubRemoteExecutor(token=github_token)
 
-            github_dir = target_dir / ".github"
-            workflows_dir = github_dir / "workflows"
-            workflows_dir.mkdir(parents=True, exist_ok=True)
-            for workflow in generated_assets.get("workflows", []):
+            if source_url:
+                temp_workspace = tempfile.TemporaryDirectory()
+                clone_dir = Path(temp_workspace.name) / "repo"
+                clone_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    executor.clone_repository(source_url, clone_dir)
+                    logger.info(f"Cloned source repository from {source_url} to temporary workspace.")
+                except Exception as exc:
+                    logger.warning(f"Cloning source repository failed: {exc}")
+                    clone_dir = None
+                    if temp_workspace:
+                        temp_workspace.cleanup()
+                        temp_workspace = None
+
+            # Scan cloned repository for Azure DevOps YAML pipeline files
+            discovered_workflows = []
+            if clone_dir:
+                for path in clone_dir.rglob("*.y*ml"):
+                    try:
+                        if ".github/workflows" in str(path).replace("\\", "/"):
+                            continue
+                        content = path.read_text(encoding="utf-8")
+                        if is_ado_pipeline_file(content):
+                            rel_path = path.relative_to(clone_dir)
+                            logger.info(f"Discovered Azure DevOps pipeline file: {rel_path}")
+                            translated = translate_raw_yaml_pipeline(
+                                content,
+                                str(rel_path),
+                                self._prompt_manager,
+                                self._slm_service
+                            )
+                            discovered_workflows.extend(translated)
+                    except Exception as e:
+                        logger.warning(f"Failed to scan/translate pipeline file {path}: {e}")
+
+            # Merge workflows
+            all_workflows = list(generated_assets.get("workflows", []))
+            for dw in discovered_workflows:
+                if not any(w["file_path"] == dw["file_path"] for w in all_workflows):
+                    all_workflows.append(dw)
+
+            # Write workflow assets to target_dir (and clone_dir if available)
+            for workflow in all_workflows:
                 path = target_dir / workflow["file_path"]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(workflow["content"], encoding="utf-8")
                 created_files.append(str(path))
 
+                if clone_dir:
+                    clone_path = clone_dir / workflow["file_path"]
+                    clone_path.parent.mkdir(parents=True, exist_ok=True)
+                    clone_path.write_text(workflow["content"], encoding="utf-8")
+
+            # Write other assets to target_dir (and clone_dir)
             for reusable in generated_assets.get("reusable_workflows", []):
                 path = target_dir / reusable["file_path"]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(reusable["content"], encoding="utf-8")
                 created_files.append(str(path))
+                if clone_dir:
+                    c_path = clone_dir / reusable["file_path"]
+                    c_path.parent.mkdir(parents=True, exist_ok=True)
+                    c_path.write_text(reusable["content"], encoding="utf-8")
 
             for composite in generated_assets.get("composite_actions", []):
                 path = target_dir / composite["file_path"]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(composite["content"], encoding="utf-8")
                 created_files.append(str(path))
+                if clone_dir:
+                    c_path = clone_dir / composite["file_path"]
+                    c_path.parent.mkdir(parents=True, exist_ok=True)
+                    c_path.write_text(composite["content"], encoding="utf-8")
 
-            release_content = (
-                "name: release\n"
-                "on:\n"
-                "  push:\n"
-                "    tags:\n"
-                "      - 'v*'\n"
-                "jobs:\n"
-                "  release:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    steps:\n"
-                "      - uses: actions/checkout@v4\n"
-            )
-            release_path = workflows_dir / f"{repo_name}_release.yml"
-            release_path.write_text(release_content, encoding="utf-8")
-            created_files.append(str(release_path))
+            # Copy all repository content (excluding .git) from clone_dir to target_dir if available
+            if clone_dir:
+                for item in clone_dir.iterdir():
+                    if item.name == ".git":
+                        continue
+                    destination = target_dir / item.name
+                    if item.is_dir():
+                        shutil.copytree(item, destination, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(item, destination)
 
-            deployment_content = (
-                "name: deployment\n"
-                "on:\n"
-                "  workflow_dispatch:\n"
-                "jobs:\n"
-                "  deploy:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    steps:\n"
-                "      - uses: actions/checkout@v4\n"
-            )
-            deployment_path = workflows_dir / f"{repo_name}_deployment.yml"
-            deployment_path.write_text(deployment_content, encoding="utf-8")
-            created_files.append(str(deployment_path))
-
-            settings_path = target_dir / ".github" / "settings.yml"
-            settings_path.write_text(
-                "repository:\n  default_branch: main\n  description: Migrated from Azure DevOps\n",
-                encoding="utf-8",
-            )
-            created_files.append(str(settings_path))
-
+            # Write reports to target_dir
             report_markdown = [
                 "# Migration Report",
                 "",
@@ -548,10 +1000,8 @@ class AdoGitHubMigrationAgent(IAgent):
             json_path = target_dir / "migration_report.json"
             json_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
 
-            logger.info("Local migration artifacts written successfully.")
-            remote_result: Optional[Dict[str, Any]] = None
+            remote_result = None
             if create_remote:
-                executor = remote_executor or GitHubRemoteExecutor(token=github_token)
                 try:
                     target_org = plan["analysis"]["target"]["organization"]
                     target_repo = plan["analysis"]["target"]["repository"]
@@ -559,48 +1009,7 @@ class AdoGitHubMigrationAgent(IAgent):
                     repo_url = repo_info.get("html_url") or f"https://github.com/{target_org}/{target_repo}"
                     repo_full_name = repo_info.get("full_name") or f"{target_org}/{target_repo}"
 
-                    source_url = source_repo_url or plan.get("analysis", {}).get("source", {}).get("repository_url")
-                    if source_url:
-                        clone_dir = target_dir / ".migration-source"
-                        clone_dir.mkdir(parents=True, exist_ok=True)
-                        executor.clone_repository(source_url, clone_dir)
-                        for workflow in generated_assets.get("workflows", []):
-                            path = clone_dir / workflow["file_path"]
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(workflow["content"], encoding="utf-8")
-                        for reusable in generated_assets.get("reusable_workflows", []):
-                            path = clone_dir / reusable["file_path"]
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(reusable["content"], encoding="utf-8")
-                        for composite in generated_assets.get("composite_actions", []):
-                            path = clone_dir / composite["file_path"]
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(composite["content"], encoding="utf-8")
-
-                        repo_readme = (
-                            f"# {plan['analysis']['target']['repository']}\n\n"
-                            f"Migrated from Azure DevOps repository {plan['analysis']['source']['repository']}.\n"
-                        )
-                        (clone_dir / "README.md").write_text(repo_readme, encoding="utf-8")
-
-                        for item in clone_dir.iterdir():
-                            if item.name == ".git":
-                                continue
-                            destination = target_dir / item.name
-                            if item.is_dir():
-                                shutil.copytree(item, destination, dirs_exist_ok=True)
-                            else:
-                                shutil.copy2(item, destination)
-                        if (clone_dir / ".git").exists():
-                            repo_contents = [path for path in clone_dir.iterdir() if path.name != ".git"]
-                            for path in repo_contents:
-                                destination = target_dir / path.name
-                                if path.is_dir():
-                                    shutil.copytree(path, destination, dirs_exist_ok=True)
-                                else:
-                                    shutil.copy2(path, destination)
-
-                    push_target = clone_dir if source_url else target_dir
+                    push_target = clone_dir if clone_dir else target_dir
                     push_result = executor.push_directory(push_target, repo_url)
                     remote_result = {
                         "status": "created",
@@ -612,6 +1021,12 @@ class AdoGitHubMigrationAgent(IAgent):
                 except Exception as exc:
                     remote_result = {"status": "failed", "error": str(exc)}
                     logger.warning(f"Remote repository creation failed: {exc}")
+
+            if temp_workspace:
+                try:
+                    temp_workspace.cleanup()
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary workspace: {e}")
 
             return {
                 "status": "migrated",
@@ -687,6 +1102,20 @@ def standalone_main() -> None:
         action="store_true",
         help="Create a remote GitHub repository and push the generated assets when migrate mode is used.",
     )
+    parser.add_argument(
+        "--slm-api-base",
+        help="API base URL for local OpenAI-compatible SLM (e.g., http://localhost:11434/v1 for Ollama).",
+    )
+    parser.add_argument(
+        "--slm-api-key",
+        default="ollama",
+        help="API key for local OpenAI-compatible SLM.",
+    )
+    parser.add_argument(
+        "--slm-model",
+        default="qwen2.5-coder:7b",
+        help="Model name for local OpenAI-compatible SLM.",
+    )
     args = parser.parse_args()
 
     context: Dict[str, Any] = {
@@ -720,13 +1149,23 @@ def standalone_main() -> None:
         example_input_output=args.example_input_output,
     )
     generated_payload = build_example_input_payload(context["source"], context["target"], discovery_data=context.get("discovery_data"))
-    written_path = write_example_input_file(paths["input_path"], context["source"], context["target"], discovery_data=context.get("discovery_data"))
-    logger.info(f"Wrote generated input file to {written_path}")
+    if args.mode == "plan" or args.example_input_output:
+        written_path = write_example_input_file(paths["input_path"], context["source"], context["target"], discovery_data=context.get("discovery_data"))
+        logger.info(f"Wrote generated input file to {written_path}")
 
     if "discovery_data" not in context:
         context["discovery_data"] = generated_payload["discovery_data"]
 
     agent = AdoGitHubMigrationAgent()
+    if args.slm_api_base:
+        logger.info(f"Using local SLM service at {args.slm_api_base} with model {args.slm_model}")
+        local_slm = LocalSLMService(
+            api_base=args.slm_api_base,
+            model=args.slm_model,
+            api_key=args.slm_api_key
+        )
+        agent.set_slm_service(local_slm)
+
     plan_res = asyncio.run(agent.plan("Plan migration", context))
 
     if args.mode == "plan":
