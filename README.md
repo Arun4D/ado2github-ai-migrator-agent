@@ -162,7 +162,7 @@ python main.py `
   --github-repository api-service `
   --mode migrate `
   --output-dir C:\temp\migration-output `
-  --slm-api-base "http://localhost:11434/v1" `
+  --slm-api-base "http://localhost:11434" `
   --slm-api-key "ollama" `
   --slm-model "qwen2.5-coder:7b"
 ```

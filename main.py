@@ -172,35 +172,69 @@ class LocalSLMService:
         import urllib.request
         import urllib.error
         
-        url = f"{self.api_base.rstrip('/')}/chat/completions"
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        base = self.api_base.rstrip('/')
         
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.1
-        }
-        
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            },
-            method="POST"
-        )
-        
-        try:
-            with urllib.request.urlopen(req, timeout=300) as response:
-                res_data = json.loads(response.read().decode("utf-8"))
-                return res_data["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.warning(f"Local SLM generate failed: {e}")
-            raise RuntimeError(f"Local SLM generation failed: {e}")
+        endpoints = []
+        if "/v1" in base:
+            endpoints.append({
+                "url": f"{base}/chat/completions",
+                "payload": {
+                    "model": self.model,
+                    "messages": [{"role": "system", "content": system_prompt}] + [{"role": "user", "content": prompt}] if system_prompt else [{"role": "user", "content": prompt}],
+                    "temperature": 0.1
+                },
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
+                },
+                "response_extractor": lambda d: d["choices"][0]["message"]["content"]
+            })
+        else:
+            endpoints.append({
+                "url": f"{base}/v1/chat/completions",
+                "payload": {
+                    "model": self.model,
+                    "messages": [{"role": "system", "content": system_prompt}] + [{"role": "user", "content": prompt}] if system_prompt else [{"role": "user", "content": prompt}],
+                    "temperature": 0.1
+                },
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
+                },
+                "response_extractor": lambda d: d["choices"][0]["message"]["content"]
+            })
+            endpoints.append({
+                "url": f"{base}/api/chat",
+                "payload": {
+                    "model": self.model,
+                    "messages": [{"role": "system", "content": system_prompt}] + [{"role": "user", "content": prompt}] if system_prompt else [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {"temperature": 0.1}
+                },
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "response_extractor": lambda d: d["message"]["content"]
+            })
+            
+        last_error = None
+        for endpoint in endpoints:
+            req = urllib.request.Request(
+                endpoint["url"],
+                data=json.dumps(endpoint["payload"]).encode("utf-8"),
+                headers=endpoint["headers"],
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    res_data = json.loads(response.read().decode("utf-8"))
+                    return endpoint["response_extractor"](res_data)
+            except Exception as e:
+                last_error = e
+                continue
+                
+        logger.warning(f"Local SLM generate failed: {last_error}")
+        raise RuntimeError(f"Local SLM generation failed: {last_error}")
 
 
 class GitHubRemoteExecutor:
