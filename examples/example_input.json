@@ -1,0 +1,81 @@
+{
+  "source": {
+    "organization": "arun4duraisamy0719",
+    "project": "Terraform-demo",
+    "repository": "Terraform-demo"
+  },
+  "target": {
+    "organization": "arun4d",
+    "repository": "Terraform-demo"
+  },
+  "discovery_data": {
+    "organization": "arun4duraisamy0719",
+    "project": "Terraform-demo",
+    "repositories": [
+      {
+        "name": "Terraform-demo",
+        "id": "repo-terraform_demo",
+        "url": "https://dev.azure.com/arun4duraisamy0719/Terraform-demo/_git/Terraform-demo",
+        "default_branch": "main",
+        "branches": [
+          "main",
+          "develop"
+        ],
+        "tags": [],
+        "has_lfs": false,
+        "submodules": []
+      }
+    ],
+    "pipelines": [
+      {
+        "name": "Terraform-demo build",
+        "id": 1001,
+        "type": "yaml",
+        "variables": [
+          {
+            "name": "Build.Configuration",
+            "value": "Release",
+            "is_secret": false,
+            "source": "pipeline"
+          }
+        ],
+        "stages": [],
+        "triggers": [
+          {
+            "branch": "main"
+          }
+        ],
+        "schedules": []
+      }
+    ],
+    "variables": [
+      {
+        "name": "Build.Configuration",
+        "value": "Release",
+        "is_secret": false,
+        "source": "pipeline"
+      }
+    ],
+    "secrets_metadata": [],
+    "agent_pools": [
+      {
+        "name": "Default Ubuntu",
+        "is_hosted": true,
+        "agent_count": 1,
+        "os_type": "Linux"
+      }
+    ],
+    "environments": [
+      {
+        "name": "production",
+        "approvals": [
+          {
+            "type": "environment"
+          }
+        ],
+        "checks": []
+      }
+    ],
+    "service_connections": []
+  }
+}

@@ -392,18 +392,6 @@ class MigrationAgentTests(unittest.TestCase):
         self.assertIn("push:", content)
         self.assertIn("pull_request:", content)
 
-    def test_example_payload_generation_for_terraform_demo(self) -> None:
-        payload = build_example_input_payload(
-            source={"organization": "arun4duraisamy0719", "project": "Terraform-demo", "repository": "Terraform-demo"},
-            target={"organization": "arun4d", "repository": "Terraform-demo"},
-        )
-        self.assertEqual(payload["source"]["repository"], "Terraform-demo")
-        pipelines = payload["discovery_data"]["pipelines"]
-        pipeline_names = {p["name"] for p in pipelines}
-        self.assertIn("Terraform-demo-CI", pipeline_names)
-        self.assertIn("Sandbox Deploy", pipeline_names)
-        self.assertIn("Sandbox Destroy", pipeline_names)
-
 
 if __name__ == "__main__":
     unittest.main()

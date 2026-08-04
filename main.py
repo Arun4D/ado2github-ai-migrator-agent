@@ -76,57 +76,6 @@ def build_example_input_payload(
     target_repo = target.get("repository") or "example-target-repo"
     default_branch = source.get("default_branch") or "main"
 
-    if source_repo.lower() == "terraform-demo":
-        pipelines = [
-            {
-                "name": "Terraform-demo-CI",
-                "id": 2,
-                "type": "classic_build",
-                "variables": [
-                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
-                ],
-                "stages": [],
-                "triggers": [{"branch": default_branch}],
-                "schedules": [],
-            },
-            {
-                "name": "Sandbox Deploy",
-                "id": 3,
-                "type": "classic_release",
-                "variables": [
-                    {"name": "Environment", "value": "Sandbox", "is_secret": False, "source": "pipeline"}
-                ],
-                "stages": [],
-                "triggers": [],
-                "schedules": [],
-            },
-            {
-                "name": "Sandbox Destroy",
-                "id": 4,
-                "type": "classic_release",
-                "variables": [
-                    {"name": "Environment", "value": "Sandbox", "is_secret": False, "source": "pipeline"}
-                ],
-                "stages": [],
-                "triggers": [],
-                "schedules": [],
-            }
-        ]
-    else:
-        pipelines = [
-            {
-                "name": f"{source_repo} build",
-                "id": 1001,
-                "type": "yaml",
-                "variables": [
-                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
-                ],
-                "stages": [],
-                "triggers": [{"branch": default_branch}],
-                "schedules": [],
-            }
-        ]
-
     generated_discovery = {
         "organization": source_org,
         "project": source_project,
@@ -142,7 +91,19 @@ def build_example_input_payload(
                 "submodules": [],
             }
         ],
-        "pipelines": pipelines,
+        "pipelines": [
+            {
+                "name": f"{source_repo} build",
+                "id": 1001,
+                "type": "yaml",
+                "variables": [
+                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
+                ],
+                "stages": [],
+                "triggers": [{"branch": default_branch}],
+                "schedules": [],
+            }
+        ],
         "variables": [
             {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
         ],
