@@ -704,7 +704,11 @@ def standalone_main() -> None:
     if args.discovery_file:
         try:
             with open(args.discovery_file, "r") as f:
-                context["discovery_data"] = json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict) and "discovery_data" in data:
+                    context["discovery_data"] = data["discovery_data"]
+                else:
+                    context["discovery_data"] = data
             logger.info(f"Loaded discovery data metadata from {args.discovery_file}")
         except Exception as e:
             logger.error(f"Failed to read discovery file: {e}")

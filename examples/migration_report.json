@@ -1,0 +1,214 @@
+{
+  "status": "success",
+  "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "analysis": {
+    "source": {
+      "organization": "arun4duraisamy0719",
+      "project": "Terraform-demo",
+      "repository": "Terraform-demo",
+      "repository_url": "https://dev.azure.com/arun4duraisamy0719/Terraform-demo/_git/Terraform-demo"
+    },
+    "target": {
+      "organization": "arun4d",
+      "repository": "Terraform-demo"
+    }
+  },
+  "migration_plan": {
+    "mapping": {
+      "source_org": "arun4duraisamy0719",
+      "source_project": "Terraform-demo",
+      "source_repo": "Terraform-demo",
+      "target_org": "arun4d",
+      "target_repo": "Terraform-demo"
+    },
+    "steps": [
+      {
+        "id": "step-1",
+        "phase": "discovery",
+        "name": "Discover Metadata",
+        "description": "Discover Git branches, variables, secrets, and agent pools.",
+        "status": "completed"
+      },
+      {
+        "id": "step-2",
+        "phase": "mapping",
+        "name": "Map Variables & Secrets",
+        "description": "Map variables and credentials securely.",
+        "status": "completed"
+      },
+      {
+        "id": "step-3",
+        "phase": "translation",
+        "name": "Translate Pipelines",
+        "description": "Generate target GitHub Action workflow YAML files.",
+        "status": "completed"
+      },
+      {
+        "id": "step-4",
+        "phase": "validation",
+        "name": "Validate Migrated Assets",
+        "description": "Verify syntax correctness and security constraints.",
+        "status": "planned"
+      }
+    ],
+    "variables": [
+      {
+        "source_name": "Build.Configuration",
+        "target_name": "BUILD.CONFIGURATION",
+        "target_scope": "repository",
+        "environment_name": null
+      }
+    ],
+    "secrets": [],
+    "runners": [
+      {
+        "source_pool": "Default Ubuntu",
+        "target_runner_label": "ubuntu-latest",
+        "runner_type": "github_hosted",
+        "recommendation_reason": "Standard pool mapped to default GitHub-hosted runner."
+      }
+    ],
+    "environments": [
+      {
+        "source_name": "production",
+        "target_name": "production",
+        "approvals_required": true,
+        "checks_mapped": []
+      }
+    ],
+    "confidence_score": 0.98,
+    "next_actions": [
+      "Validate GitHub Action workflow files syntax.",
+      "Manually configure target secrets on GitHub Organization/Repository.",
+      "Verify self-hosted runner execution configurations."
+    ]
+  },
+  "generated_assets": {
+    "workflows": [
+      {
+        "name": "Terraform-demo-CI-workflow",
+        "file_path": ".github/workflows/terraform-demo-ci.yml",
+        "content": "# Translated from Azure DevOps Pipeline: Terraform-demo-CI\nname: Terraform-demo-CI (Classic Build)\n\non:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout Code\n        uses: actions/checkout@v4\n",
+        "is_reusable": false,
+        "description": "Generated workflow translation for Azure DevOps pipeline Terraform-demo-CI."
+      },
+      {
+        "name": "Sandbox Deploy-workflow",
+        "file_path": ".github/workflows/sandbox_deploy.yml",
+        "content": "# Translated from Azure DevOps Pipeline: Sandbox Deploy\nname: Sandbox Deploy (Release)\n\non:\n  release:\n    types: [published]\n  workflow_dispatch:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout Code\n        uses: actions/checkout@v4\n",
+        "is_reusable": false,
+        "description": "Generated workflow translation for Azure DevOps pipeline Sandbox Deploy."
+      },
+      {
+        "name": "Sandbox Destroy-workflow",
+        "file_path": ".github/workflows/sandbox_destroy.yml",
+        "content": "# Translated from Azure DevOps Pipeline: Sandbox Destroy\nname: Sandbox Destroy (Release)\n\non:\n  release:\n    types: [published]\n  workflow_dispatch:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout Code\n        uses: actions/checkout@v4\n",
+        "is_reusable": false,
+        "description": "Generated workflow translation for Azure DevOps pipeline Sandbox Destroy."
+      }
+    ],
+    "reusable_workflows": [],
+    "composite_actions": [],
+    "explanation": "Deterministic asset translations generated successfully."
+  },
+  "validation": {
+    "overall_status": "warning",
+    "checks": [
+      {
+        "name": "repository_migration_scope",
+        "category": "repository",
+        "status": "passed",
+        "message": "Repository Terraform-demo matches scope limit rules.",
+        "remediation": null
+      },
+      {
+        "name": "default_branch_check",
+        "category": "repository",
+        "status": "passed",
+        "message": "Default branch is mapped to 'main'.",
+        "remediation": null
+      },
+      {
+        "name": "workflow_syntax_check",
+        "category": "syntax",
+        "status": "passed",
+        "message": "Workflow .github/workflows/terraform-demo-ci.yml parsed successfully as valid YAML with standard Action root keys.",
+        "remediation": null
+      },
+      {
+        "name": "workflow_syntax_check",
+        "category": "syntax",
+        "status": "passed",
+        "message": "Workflow .github/workflows/sandbox_deploy.yml parsed successfully as valid YAML with standard Action root keys.",
+        "remediation": null
+      },
+      {
+        "name": "workflow_syntax_check",
+        "category": "syntax",
+        "status": "passed",
+        "message": "Workflow .github/workflows/sandbox_destroy.yml parsed successfully as valid YAML with standard Action root keys.",
+        "remediation": null
+      },
+      {
+        "name": "runner_mapping_check",
+        "category": "runners",
+        "status": "passed",
+        "message": "Source pool 'Default Ubuntu' successfully mapped to runner 'ubuntu-latest'.",
+        "remediation": null
+      },
+      {
+        "name": "variable_name_check",
+        "category": "variables",
+        "status": "warning",
+        "message": "Variable name 'BUILD.CONFIGURATION' contains non-standard characters.",
+        "remediation": "Rename variable to use standard alphanumeric/underscore identifiers."
+      }
+    ],
+    "validated_at": "2026-08-04T20:23:18.168477"
+  },
+  "recommendations": {
+    "unsupported_features": [
+      {
+        "feature_name": "Classic Release Pipelines",
+        "location": "Pipeline Sandbox Deploy",
+        "description": "Classic Release UI Pipelines are translated to GitHub Actions CD workflows.",
+        "impact": "info",
+        "recommendation": "Verify migrated environments, deployment protection rules, and manual approvals in GitHub."
+      },
+      {
+        "feature_name": "Classic Release Pipelines",
+        "location": "Pipeline Sandbox Destroy",
+        "description": "Classic Release UI Pipelines are translated to GitHub Actions CD workflows.",
+        "impact": "info",
+        "recommendation": "Verify migrated environments, deployment protection rules, and manual approvals in GitHub."
+      }
+    ],
+    "risk_assessment": [],
+    "rollback_plan": [
+      {
+        "order": 1,
+        "action": "Delete generated workflows",
+        "description": "Remove workflow YAML files from target repository branch .github/workflows/.",
+        "verification_step": "Verify .github/workflows directory is clean or reverted to original branch commit."
+      },
+      {
+        "order": 2,
+        "action": "Clean target configurations",
+        "description": "Delete environment entries, repository variables, and secret mappings created during the execution.",
+        "verification_step": "Check repository settings UI to verify clean state."
+      },
+      {
+        "order": 3,
+        "action": "Archive GitHub repository",
+        "description": "If the target repository was newly created, delete or rename it to free the namespace.",
+        "verification_step": "Verify target URL returns 404."
+      }
+    ]
+  },
+  "confidence_score": 0.98,
+  "next_actions": [
+    "Validate GitHub Action workflow files syntax.",
+    "Manually configure target secrets on GitHub Organization/Repository.",
+    "Verify self-hosted runner execution configurations."
+  ]
+}

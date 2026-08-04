@@ -28,9 +28,9 @@
     ],
     "pipelines": [
       {
-        "name": "Terraform-demo build",
-        "id": 1001,
-        "type": "yaml",
+        "name": "Terraform-demo-CI",
+        "id": 2,
+        "type": "classic_build",
         "variables": [
           {
             "name": "Build.Configuration",
@@ -45,6 +45,38 @@
             "branch": "main"
           }
         ],
+        "schedules": []
+      },
+      {
+        "name": "Sandbox Deploy",
+        "id": 3,
+        "type": "classic_release",
+        "variables": [
+          {
+            "name": "Environment",
+            "value": "Sandbox",
+            "is_secret": false,
+            "source": "pipeline"
+          }
+        ],
+        "stages": [],
+        "triggers": [],
+        "schedules": []
+      },
+      {
+        "name": "Sandbox Destroy",
+        "id": 4,
+        "type": "classic_release",
+        "variables": [
+          {
+            "name": "Environment",
+            "value": "Sandbox",
+            "is_secret": false,
+            "source": "pipeline"
+          }
+        ],
+        "stages": [],
+        "triggers": [],
         "schedules": []
       }
     ],
