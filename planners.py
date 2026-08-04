@@ -49,10 +49,19 @@ class PipelinePlanner:
         slm_service: Optional[Any] = None,
     ) -> GeneratedAssets:
         if slm_service and slm_service.available:
-            prompt = self.prompt_manager.format_prompt(
-                "05_yaml_translation.md",
-                {"pipeline_json": pipeline.model_dump_json(indent=2)},
+            if pipeline.type == "classic_release":
+                specific_rules = self.prompt_manager.get_prompt("04_release_pipeline.md")
+            else:
+                specific_rules = self.prompt_manager.get_prompt("03_build_pipeline.md")
+            translation_rules = self.prompt_manager.get_prompt("05_yaml_translation.md")
+            combined_prompt = (
+                f"{specific_rules}\n\n"
+                f"{translation_rules}\n\n"
+                "Please translate the following Azure DevOps pipeline details into GitHub Actions format. "
+                "The output must match the AdoPipeline schema input converted to GitHub workflows.\n\n"
+                "Pipeline JSON:\n{pipeline_json}"
             )
+            prompt = combined_prompt.replace("{pipeline_json}", pipeline.model_dump_json(indent=2))
             system_prompt = self.prompt_manager.get_prompt("00_system_prompt.md")
             try:
                 raw_response = slm_service.generate_sync(prompt, system_prompt=system_prompt)
@@ -70,14 +79,40 @@ class PipelinePlanner:
             except Exception:
                 pass  # Fallback to deterministic template below
 
-        # Deterministic default translation
+        # Deterministic default translation based on pipeline type
+        if pipeline.type == "classic_release":
+            wf_name = f"{pipeline.name} (Release)"
+            on_trigger = (
+                "on:\n"
+                "  release:\n"
+                "    types: [published]\n"
+                "  workflow_dispatch:\n"
+            )
+        elif pipeline.type == "classic_build":
+            wf_name = f"{pipeline.name} (Classic Build)"
+            on_trigger = (
+                "on:\n"
+                "  push:\n"
+                "    branches:\n"
+                "      - main\n"
+                "  workflow_dispatch:\n"
+            )
+        else:
+            wf_name = f"{pipeline.name} (YAML Build)"
+            on_trigger = (
+                "on:\n"
+                "  push:\n"
+                "    branches:\n"
+                "      - main\n"
+                "  pull_request:\n"
+                "    branches:\n"
+                "      - main\n"
+            )
+
         workflow_content = (
             f"# Translated from Azure DevOps Pipeline: {pipeline.name}\n"
-            "name: CI Pipeline\n\n"
-            "on:\n"
-            "  push:\n"
-            "    branches:\n"
-            "      - main\n\n"
+            f"name: {wf_name}\n\n"
+            f"{on_trigger}"
             "jobs:\n"
             "  build:\n"
             "    runs-on: ubuntu-latest\n"

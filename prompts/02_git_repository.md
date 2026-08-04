@@ -15,8 +15,8 @@ Supported Objects:
 - Branch Policies
 
 Migration Requirements:
-- Preserve commit history where supported by the source and the target Git tooling.
-- Preserve branches and tags in the target GitHub repository.
+- Preserve commit history, branches, and tags. When cloning the source repository, the executor must fetch all remote heads into local branches (using the refspec `+refs/heads/*:refs/heads/*` with `--update-head-ok`) and download all tags (using `git fetch --tags`).
+- Push local branches and tags using mirror-push (`git push --mirror`) to ensure target repository includes all branches, tags, and complete commit history.
 - Create the target GitHub repository when remote creation is requested and credentials are available.
 
 Target Objects:

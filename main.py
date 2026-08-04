@@ -76,6 +76,57 @@ def build_example_input_payload(
     target_repo = target.get("repository") or "example-target-repo"
     default_branch = source.get("default_branch") or "main"
 
+    if source_repo.lower() == "terraform-demo":
+        pipelines = [
+            {
+                "name": "Terraform-demo-CI",
+                "id": 2,
+                "type": "classic_build",
+                "variables": [
+                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
+                ],
+                "stages": [],
+                "triggers": [{"branch": default_branch}],
+                "schedules": [],
+            },
+            {
+                "name": "Sandbox Deploy",
+                "id": 3,
+                "type": "classic_release",
+                "variables": [
+                    {"name": "Environment", "value": "Sandbox", "is_secret": False, "source": "pipeline"}
+                ],
+                "stages": [],
+                "triggers": [],
+                "schedules": [],
+            },
+            {
+                "name": "Sandbox Destroy",
+                "id": 4,
+                "type": "classic_release",
+                "variables": [
+                    {"name": "Environment", "value": "Sandbox", "is_secret": False, "source": "pipeline"}
+                ],
+                "stages": [],
+                "triggers": [],
+                "schedules": [],
+            }
+        ]
+    else:
+        pipelines = [
+            {
+                "name": f"{source_repo} build",
+                "id": 1001,
+                "type": "yaml",
+                "variables": [
+                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
+                ],
+                "stages": [],
+                "triggers": [{"branch": default_branch}],
+                "schedules": [],
+            }
+        ]
+
     generated_discovery = {
         "organization": source_org,
         "project": source_project,
@@ -91,19 +142,7 @@ def build_example_input_payload(
                 "submodules": [],
             }
         ],
-        "pipelines": [
-            {
-                "name": f"{source_repo} build",
-                "id": 1001,
-                "type": "yaml",
-                "variables": [
-                    {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
-                ],
-                "stages": [],
-                "triggers": [{"branch": default_branch}],
-                "schedules": [],
-            }
-        ],
+        "pipelines": pipelines,
         "variables": [
             {"name": "Build.Configuration", "value": "Release", "is_secret": False, "source": "pipeline"}
         ],
@@ -197,6 +236,33 @@ class GitHubRemoteExecutor:
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip() or "Git clone failed."
             raise RuntimeError(error)
+
+        # Fetch all branches from remote as local branches to ensure they are migrated
+        fetch_branches = subprocess.run(
+            ["git", "fetch", "origin", "+refs/heads/*:refs/heads/*", "--update-head-ok"],
+            cwd=str(destination_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetch_branches.returncode != 0:
+            logger.warning(
+                f"Failed to fetch all remote branches as local branches: {fetch_branches.stderr.strip() or fetch_branches.stdout.strip()}"
+            )
+
+        # Fetch all tags explicitly
+        fetch_tags = subprocess.run(
+            ["git", "fetch", "--tags"],
+            cwd=str(destination_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetch_tags.returncode != 0:
+            logger.warning(
+                f"Failed to fetch tags explicitly: {fetch_tags.stderr.strip() or fetch_tags.stdout.strip()}"
+            )
+
         return {"status": "cloned", "source_url": source_url, "destination": str(destination_path)}
 
     def push_directory(self, local_path: Path, target_url: str) -> Dict[str, Any]:
@@ -306,6 +372,17 @@ class AdoGitHubMigrationAgent(IAgent):
                 logger.info("No discovery data provided. Creating discovery metadata from the supplied repository scope.")
                 generated_payload = build_example_input_payload(source, target)
                 discovery_data = AdoDiscoveryData(**generated_payload["discovery_data"])
+
+            # Ensure repository_url is set in the source context to preserve history
+            if "repository_url" not in source:
+                if discovery_data.repositories:
+                    matching_repo = next(
+                        (r for r in discovery_data.repositories if r.name == source["repository"]),
+                        discovery_data.repositories[0]
+                    )
+                    source["repository_url"] = matching_repo.url
+                else:
+                    source["repository_url"] = f"https://dev.azure.com/{source['organization']}/{source['project']}/_git/{source['repository']}"
 
             # Initialize planners
             repo_planner = GitRepoPlanner(self._prompt_manager)
@@ -715,6 +792,7 @@ def standalone_main() -> None:
             output_dir=target_output_dir,
             github_token=args.github_token,
             create_remote=args.create_remote,
+            source_repo_url=plan_res.get("analysis", {}).get("source", {}).get("repository_url"),
         )
     )
     print(json.dumps(exec_res, indent=2))

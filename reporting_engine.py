@@ -36,9 +36,9 @@ class ReportingEngine:
                     UnsupportedFeature(
                         feature_name="Classic Release Pipelines",
                         location=f"Pipeline {pipe.name}",
-                        description="Classic Release UI Pipelines do not have direct YAML configurations in GitHub Actions.",
-                        impact="degraded",
-                        recommendation="Refactor classic release pipeline stages into environment-specific jobs in the main workflow YAML.",
+                        description="Classic Release UI Pipelines are translated to GitHub Actions CD workflows.",
+                        impact="info",
+                        recommendation="Verify migrated environments, deployment protection rules, and manual approvals in GitHub.",
                     )
                 )
 

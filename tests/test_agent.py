@@ -315,6 +315,95 @@ class MigrationAgentTests(unittest.TestCase):
         self.assertGreater(len(rep.rollback_plan), 0)
         self.assertEqual(rep.technical_summary.total_pipelines_converted, 1)
 
+    def test_github_remote_executor_clone_repository(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from main import GitHubRemoteExecutor
+        
+        executor = GitHubRemoteExecutor(token="fake-token")
+        
+        with patch("subprocess.run") as mock_run:
+            mock_res = MagicMock()
+            mock_res.returncode = 0
+            mock_run.return_value = mock_res
+            
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                dest_path = Path(tmp_dir) / "repo"
+                result = executor.clone_repository(
+                    source_url="https://dev.azure.com/org/proj/_git/repo",
+                    destination_path=dest_path
+                )
+                
+                self.assertEqual(result["status"], "cloned")
+                self.assertEqual(result["source_url"], "https://dev.azure.com/org/proj/_git/repo")
+                
+                self.assertEqual(mock_run.call_count, 3)
+                
+                first_call_args = mock_run.call_args_list[0][0][0]
+                self.assertEqual(first_call_args, ["git", "clone", "https://dev.azure.com/org/proj/_git/repo", str(dest_path)])
+                
+                second_call_args = mock_run.call_args_list[1][0][0]
+                self.assertEqual(second_call_args, ["git", "fetch", "origin", "+refs/heads/*:refs/heads/*", "--update-head-ok"])
+                second_call_kwargs = mock_run.call_args_list[1][1]
+                self.assertEqual(second_call_kwargs["cwd"], str(dest_path))
+                
+                third_call_args = mock_run.call_args_list[2][0][0]
+                self.assertEqual(third_call_args, ["git", "fetch", "--tags"])
+                third_call_kwargs = mock_run.call_args_list[2][1]
+                self.assertEqual(third_call_kwargs["cwd"], str(dest_path))
+
+    def test_agent_plan_populates_repository_url(self) -> None:
+        context = {
+            "source": {"organization": "ado", "project": "project", "repository": "source"},
+            "target": {"organization": "github", "repository": "target"},
+        }
+        result = asyncio.run(self.agent.plan("migrate", context))
+        self.assertEqual(result["status"], "success")
+        repo_url = result["analysis"]["source"]["repository_url"]
+        self.assertEqual(repo_url, "https://dev.azure.com/ado/project/_git/source")
+
+    def test_pipeline_planner_fallback_by_type(self) -> None:
+        from planners import PipelinePlanner
+        from schemas.discovery import AdoPipeline
+        
+        manager = PromptManager(PromptLoader(PROMPT_DIR))
+        planner = PipelinePlanner(manager)
+        
+        # 1. Test classic_release
+        release_pipeline = AdoPipeline(name="Prod CD", id=201, type="classic_release")
+        assets = planner.plan(release_pipeline)
+        content = assets.workflows[0].content
+        self.assertIn("name: Prod CD (Release)", content)
+        self.assertIn("release:", content)
+        self.assertIn("workflow_dispatch:", content)
+        
+        # 2. Test classic_build
+        classic_build = AdoPipeline(name="Build CI", id=202, type="classic_build")
+        assets = planner.plan(classic_build)
+        content = assets.workflows[0].content
+        self.assertIn("name: Build CI (Classic Build)", content)
+        self.assertIn("push:", content)
+        self.assertIn("workflow_dispatch:", content)
+        
+        # 3. Test yaml
+        yaml_build = AdoPipeline(name="YAML CI", id=203, type="yaml")
+        assets = planner.plan(yaml_build)
+        content = assets.workflows[0].content
+        self.assertIn("name: YAML CI (YAML Build)", content)
+        self.assertIn("push:", content)
+        self.assertIn("pull_request:", content)
+
+    def test_example_payload_generation_for_terraform_demo(self) -> None:
+        payload = build_example_input_payload(
+            source={"organization": "arun4duraisamy0719", "project": "Terraform-demo", "repository": "Terraform-demo"},
+            target={"organization": "arun4d", "repository": "Terraform-demo"},
+        )
+        self.assertEqual(payload["source"]["repository"], "Terraform-demo")
+        pipelines = payload["discovery_data"]["pipelines"]
+        pipeline_names = {p["name"] for p in pipelines}
+        self.assertIn("Terraform-demo-CI", pipeline_names)
+        self.assertIn("Sandbox Deploy", pipeline_names)
+        self.assertIn("Sandbox Destroy", pipeline_names)
+
 
 if __name__ == "__main__":
     unittest.main()

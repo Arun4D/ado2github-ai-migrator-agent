@@ -106,7 +106,7 @@ This writes a report file at the requested output directory.
 
 ### 4. Actual migrate
 
-Use migrate mode to materialize the generated Git repository, workflow, release, deployment, and report assets locally. If you also pass a GitHub token and the --create-remote flag, the agent will clone the Azure DevOps repository content, preserve repository history where supported, and push the migrated repository content to the target GitHub repository.
+Use migrate mode to materialize the generated Git repository, workflow, release, deployment, and report assets locally. If you also pass a GitHub token and the --create-remote flag, the agent will clone the Azure DevOps repository content, fetch all remote branches as local heads, fetch all tags, apply/commit the generated GitHub Action workflows on the default branch, and then mirror-push all history, branches, and tags to the target GitHub repository. This includes full support for translating YAML pipelines, Classic Build pipelines, and Classic Release/CD pipelines into their appropriate GitHub Actions equivalents.
 
 ```powershell
 python main.py `
